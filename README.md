@@ -12,12 +12,12 @@ slice includes:
 - high-precision, reproducibly generated Haar and `db1..db38` filters;
 - all nine PyWavelets boundary modes;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
-- contiguous multilevel decompositions; and
+- reusable allocation-free multilevel plans and contiguous decompositions; and
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.
 
-The remaining built-in families, reusable multilevel plans, SIMD kernels, and
-benchmarks remain before the first beta.
+The remaining built-in families, SIMD kernels, and benchmarks remain before
+the first beta.
 
 The implementation invariants and deliberate departures from the initial
 sketch are recorded in [DESIGN.md](DESIGN.md).
@@ -53,6 +53,31 @@ assert!(reconstructed
     .iter()
     .zip(signal)
     .all(|(actual, expected)| (actual - expected).abs() < 1e-12));
+
+# Ok::<(), wavelets::WaveletError>(())
+```
+
+Reusable multilevel transforms allocate their coefficient and scratch storage
+once:
+
+```rust
+use wavelets::{Boundary, DwtPlanner, Level, Wavelet};
+
+let signal = [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+let wavelet = Wavelet::haar();
+let mut planner = DwtPlanner::new();
+let plan = planner.plan_wavedec(
+    signal.len(),
+    &wavelet,
+    Boundary::Symmetric,
+    Level::Max,
+)?;
+let mut decomposition = plan.allocate_decomposition();
+let mut reconstructed = vec![0.0; plan.signal_len()];
+let mut scratch = vec![0.0; plan.scratch_len()];
+
+plan.forward_into(&signal, &mut decomposition, &mut scratch);
+plan.inverse_into(&decomposition, &mut reconstructed, &mut scratch);
 
 # Ok::<(), wavelets::WaveletError>(())
 ```

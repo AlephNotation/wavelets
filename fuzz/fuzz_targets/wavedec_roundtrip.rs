@@ -1,8 +1,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use wavelets::{Level, WaveletError, dwt_max_level, wavedec, waverec};
-use wavelets_fuzz::{TransformCase, assert_reconstruction_f32, assert_reconstruction_f64};
+use wavelets::{DwtPlanner, Level, WaveletError, dwt_max_level, wavedec, waverec};
+use wavelets_fuzz::{
+    TransformCase, assert_reconstruction_f32, assert_reconstruction_f64, assert_same_f32,
+    assert_same_f64,
+};
 
 fuzz_target!(|data: &[u8]| {
     let case = TransformCase::decode(data, 3);
@@ -37,10 +40,27 @@ fn run_f64(case: TransformCase, level: Level, maximum: usize) {
         return;
     }
 
-    let mut decomposition = decomposition.expect("normalized decomposition is valid");
+    let expected = decomposition.expect("normalized decomposition is valid");
+    let mut planner = DwtPlanner::<f64>::new();
+    let plan = planner
+        .plan_wavedec(case.samples.len(), &case.wavelet, case.boundary, level)
+        .expect("normalized plan is valid");
+    let allocating = plan.forward(&case.samples);
+    let mut decomposition = plan.allocate_decomposition();
+    let mut scratch = vec![0.0; plan.scratch_len()];
+    plan.forward_into(&case.samples, &mut decomposition, &mut scratch);
+    assert_same_f64(allocating.as_slice(), expected.as_slice());
+    assert_same_f64(decomposition.as_slice(), expected.as_slice());
     assert_layout(&decomposition, case.samples.len());
     touch_bands(&mut decomposition);
-    let reconstructed = waverec(&decomposition).expect("a valid decomposition reconstructs");
+
+    let expected_reconstruction =
+        waverec(&decomposition).expect("a valid decomposition reconstructs");
+    let allocating_reconstruction = plan.inverse(&decomposition);
+    let mut reconstructed = vec![0.0; case.samples.len()];
+    plan.inverse_into(&decomposition, &mut reconstructed, &mut scratch);
+    assert_same_f64(&allocating_reconstruction, &expected_reconstruction);
+    assert_same_f64(&reconstructed, &expected_reconstruction);
     assert_reconstruction_f64(&reconstructed, &case.samples);
 }
 
@@ -61,10 +81,27 @@ fn run_f32(case: TransformCase, level: Level, maximum: usize) {
         return;
     }
 
-    let mut decomposition = decomposition.expect("normalized decomposition is valid");
+    let expected = decomposition.expect("normalized decomposition is valid");
+    let mut planner = DwtPlanner::<f32>::new();
+    let plan = planner
+        .plan_wavedec(samples.len(), &case.wavelet, case.boundary, level)
+        .expect("normalized plan is valid");
+    let allocating = plan.forward(&samples);
+    let mut decomposition = plan.allocate_decomposition();
+    let mut scratch = vec![0.0; plan.scratch_len()];
+    plan.forward_into(&samples, &mut decomposition, &mut scratch);
+    assert_same_f32(allocating.as_slice(), expected.as_slice());
+    assert_same_f32(decomposition.as_slice(), expected.as_slice());
     assert_layout(&decomposition, samples.len());
     touch_bands(&mut decomposition);
-    let reconstructed = waverec(&decomposition).expect("a valid decomposition reconstructs");
+
+    let expected_reconstruction =
+        waverec(&decomposition).expect("a valid decomposition reconstructs");
+    let allocating_reconstruction = plan.inverse(&decomposition);
+    let mut reconstructed = vec![0.0; samples.len()];
+    plan.inverse_into(&decomposition, &mut reconstructed, &mut scratch);
+    assert_same_f32(&allocating_reconstruction, &expected_reconstruction);
+    assert_same_f32(&reconstructed, &expected_reconstruction);
     assert_reconstruction_f32(&reconstructed, &samples);
 }
 

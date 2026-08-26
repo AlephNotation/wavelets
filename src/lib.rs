@@ -16,7 +16,7 @@ mod plan;
 mod wavelet;
 
 pub use boundary::Boundary;
-pub use decomposition::{Decomposition, Level, dwt_max_level, wavedec, waverec};
+pub use decomposition::{Decomposition, Level, WavedecPlan, dwt_max_level, wavedec, waverec};
 pub use error::WaveletError;
 pub use num::WaveletNum;
 pub use plan::{Dwt, DwtPlanner};

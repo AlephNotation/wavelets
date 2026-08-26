@@ -279,6 +279,14 @@ impl Wavelet {
     pub(crate) fn id(&self) -> u64 {
         self.0.id
     }
+
+    pub(crate) fn has_same_filter_bank(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || (self.dec_lo() == other.dec_lo()
+                && self.dec_hi() == other.dec_hi()
+                && self.rec_lo() == other.rec_lo()
+                && self.rec_hi() == other.rec_hi())
+    }
 }
 
 #[cfg(test)]

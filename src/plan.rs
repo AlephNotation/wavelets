@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
 
+use crate::decomposition::{Level, WavedecPlan, resolve_levels};
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
 /// A reusable, fixed-length one-level DWT/IDWT plan.
@@ -49,9 +50,18 @@ struct PlanKey {
     boundary: Boundary,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MultilevelPlanKey {
+    signal_len: usize,
+    wavelet_id: u64,
+    boundary: Boundary,
+    levels: usize,
+}
+
 /// Creates and caches fixed-length discrete wavelet transform plans.
 pub struct DwtPlanner<T: WaveletNum> {
     cache: HashMap<PlanKey, Weak<dyn Dwt<T>>>,
+    multilevel_cache: HashMap<MultilevelPlanKey, Weak<WavedecPlan<T>>>,
     marker: PhantomData<T>,
 }
 
@@ -60,6 +70,7 @@ impl<T: WaveletNum> DwtPlanner<T> {
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
+            multilevel_cache: HashMap::new(),
             marker: PhantomData,
         }
     }
@@ -87,6 +98,34 @@ impl<T: WaveletNum> DwtPlanner<T> {
 
         let plan: Arc<dyn Dwt<T>> = Arc::new(ScalarPlan::new(len, wavelet, boundary));
         self.cache.insert(key, Arc::downgrade(&plan));
+        Ok(plan)
+    }
+
+    /// Plans a multilevel transform for signals of exactly `len` samples.
+    ///
+    /// Every single-level plan, band offset, and scratch region is prepared up
+    /// front. Repeated requests resolving to the same number of levels reuse
+    /// the same live plan.
+    pub fn plan_wavedec(
+        &mut self,
+        len: usize,
+        wavelet: &Wavelet,
+        boundary: Boundary,
+        level: Level,
+    ) -> Result<Arc<WavedecPlan<T>>, WaveletError> {
+        let levels = resolve_levels(len, wavelet.filter_len(), level)?;
+        let key = MultilevelPlanKey {
+            signal_len: len,
+            wavelet_id: wavelet.id(),
+            boundary,
+            levels,
+        };
+        if let Some(plan) = self.multilevel_cache.get(&key).and_then(Weak::upgrade) {
+            return Ok(plan);
+        }
+
+        let plan = Arc::new(WavedecPlan::new(self, len, wavelet, boundary, levels)?);
+        self.multilevel_cache.insert(key, Arc::downgrade(&plan));
         Ok(plan)
     }
 }
@@ -525,6 +564,19 @@ mod tests {
         let wavelet = Wavelet::haar();
         let first = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         let second = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn planner_reuses_equivalent_live_multilevel_plans() {
+        let mut planner = DwtPlanner::<f64>::new();
+        let wavelet = Wavelet::haar();
+        let first = planner
+            .plan_wavedec(16, &wavelet, Boundary::Symmetric, Level::Max)
+            .unwrap();
+        let second = planner
+            .plan_wavedec(16, &wavelet, Boundary::Symmetric, Level::Exact(4))
+            .unwrap();
         assert!(Arc::ptr_eq(&first, &second));
     }
 
