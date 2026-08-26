@@ -13,7 +13,8 @@ slice includes:
 - all nine PyWavelets boundary modes;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
 - contiguous multilevel decompositions; and
-- PyWavelets reference and reconstruction property tests.
+- exhaustive reconstruction, PyWavelets reference, orthogonality, and
+  vanishing-moment tests.
 
 The remaining built-in families, reusable multilevel plans, SIMD kernels, and
 benchmarks remain before the first beta.

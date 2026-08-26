@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use wavelets::{Boundary, DwtPlanner, Wavelet};
+use wavelets::{Boundary, DwtPlanner, Level, Wavelet, wavedec, waverec};
 
 const DB2_LEN4: &[(Boundary, [f64; 3], [f64; 3])] = &[
     (
@@ -152,6 +152,7 @@ struct Fixtures {
     generator: String,
     signals: Vec<FixtureSignal>,
     cases: Vec<FixtureCase>,
+    multilevel_cases: Vec<MultilevelFixtureCase>,
 }
 
 #[derive(Deserialize)]
@@ -169,6 +170,14 @@ struct FixtureCase {
     detail: Vec<f64>,
 }
 
+#[derive(Deserialize)]
+struct MultilevelFixtureCase {
+    wavelet: String,
+    mode: String,
+    len: usize,
+    bands: Vec<Vec<f64>>,
+}
+
 #[test]
 fn generated_fixture_matrix_matches_pywavelets() {
     let fixtures: Fixtures =
@@ -182,16 +191,7 @@ fn generated_fixture_matrix_matches_pywavelets() {
     let mut planner = DwtPlanner::<f64>::new();
 
     for case in fixtures.cases {
-        let wavelet = match case.wavelet.as_str() {
-            "haar" => Wavelet::haar(),
-            name => Wavelet::daubechies(
-                name.strip_prefix("db")
-                    .unwrap_or_else(|| panic!("unknown fixture wavelet {name}"))
-                    .parse()
-                    .unwrap(),
-            )
-            .unwrap(),
-        };
+        let wavelet = fixture_wavelet(&case.wavelet);
         let boundary = fixture_boundary(&case.mode);
         let signal = &signals[&case.len];
         let plan = planner.plan_dwt(case.len, &wavelet, boundary).unwrap();
@@ -221,6 +221,70 @@ fn generated_fixture_matrix_matches_pywavelets() {
             &context,
             reconstruction_tolerance,
         );
+    }
+}
+
+#[test]
+fn multilevel_fixture_matrix_matches_pywavelets() {
+    let fixtures: Fixtures =
+        serde_json::from_str(include_str!("fixtures/pywavelets-1.8.0.json")).unwrap();
+    assert_eq!(fixtures.generator, "PyWavelets 1.8.0");
+    let signals: HashMap<_, _> = fixtures
+        .signals
+        .into_iter()
+        .map(|signal| (signal.len, signal.values))
+        .collect();
+
+    for case in fixtures.multilevel_cases {
+        let wavelet = fixture_wavelet(&case.wavelet);
+        let boundary = fixture_boundary(&case.mode);
+        let signal = &signals[&case.len];
+        let decomposition = wavedec(signal, &wavelet, boundary, Level::Max).unwrap();
+        let context = format!("{} {} len={}", case.wavelet, case.mode, case.len);
+        assert_eq!(case.bands.len(), decomposition.levels() + 1, "{context}");
+
+        let tolerance =
+            multilevel_reference_tolerance(&wavelet, boundary, signal, decomposition.levels());
+        assert_slice_close_with_tolerance(
+            decomposition.approx(),
+            &case.bands[0],
+            boundary,
+            &context,
+            tolerance,
+        );
+        for (band_index, expected) in case.bands.iter().skip(1).enumerate() {
+            let level = decomposition.levels() - band_index;
+            assert_slice_close_with_tolerance(
+                decomposition.detail(level),
+                expected,
+                boundary,
+                &context,
+                tolerance,
+            );
+        }
+
+        let reconstruction_tolerance =
+            1.0e-12 * signal.iter().copied().map(f64::abs).fold(1.0, f64::max);
+        assert_slice_close_with_tolerance(
+            &waverec(&decomposition).unwrap(),
+            signal,
+            boundary,
+            &context,
+            reconstruction_tolerance,
+        );
+    }
+}
+
+fn fixture_wavelet(name: &str) -> Wavelet {
+    match name {
+        "haar" => Wavelet::haar(),
+        name => Wavelet::daubechies(
+            name.strip_prefix("db")
+                .unwrap_or_else(|| panic!("unknown fixture wavelet {name}"))
+                .parse()
+                .unwrap(),
+        )
+        .unwrap(),
     }
 }
 
@@ -288,4 +352,13 @@ fn reference_tolerance(wavelet: &Wavelet, boundary: Boundary, signal: &[f64]) ->
     // vanish: C and Rust may contract arithmetic differently around zero. This
     // is a conservative dot-product forward-error bound instead.
     8.0 * f64::EPSILON * wavelet.filter_len() as f64 * filter_norm * extension_scale
+}
+
+fn multilevel_reference_tolerance(
+    wavelet: &Wavelet,
+    boundary: Boundary,
+    signal: &[f64],
+    levels: usize,
+) -> f64 {
+    reference_tolerance(wavelet, boundary, signal) * (levels + 1) as f64
 }
