@@ -1,0 +1,41 @@
+name: Fuzz smoke tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_FUZZ_VERSION: 0.13.2
+  FUZZ_SECONDS: 15
+
+jobs:
+  fuzz:
+    name: Build and smoke-test fuzz targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-01
+      - uses: actions/cache@v5
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> "$GITHUB_PATH"
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version "${{ env.CARGO_FUZZ_VERSION }}" cargo-fuzz --locked
+      - run: cargo fuzz build
+      - name: Run each target
+        shell: bash
+        run: |
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_len=2051 -max_total_time="$FUZZ_SECONDS"
+          done
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzzing-artifacts-${{ github.sha }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore

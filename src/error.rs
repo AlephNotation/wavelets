@@ -1,0 +1,61 @@
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+
+/// An error produced while defining, planning, or applying a transform.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WaveletError {
+    /// A transform cannot be planned for an empty signal.
+    EmptySignal,
+    /// The selected boundary mode is undefined for this signal length.
+    BoundaryRequiresLongerSignal {
+        /// The requested signal length.
+        len: usize,
+        /// The minimum supported length.
+        minimum: usize,
+        /// The boundary mode's stable name.
+        boundary: &'static str,
+    },
+    /// A custom filter bank is structurally invalid.
+    InvalidFilterBank(&'static str),
+    /// The requested built-in wavelet is not available yet.
+    UnsupportedWavelet {
+        /// The wavelet family name.
+        family: &'static str,
+        /// The requested order encoded for that family.
+        order: String,
+    },
+    /// A requested decomposition level exceeds the boundary-safe maximum.
+    InvalidLevel {
+        /// The requested number of levels.
+        requested: usize,
+        /// The maximum supported number of levels.
+        maximum: usize,
+    },
+}
+
+impl Display for WaveletError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptySignal => f.write_str("a wavelet transform requires a non-empty signal"),
+            Self::BoundaryRequiresLongerSignal {
+                len,
+                minimum,
+                boundary,
+            } => write!(
+                f,
+                "boundary mode {boundary:?} requires a signal of length at least {minimum}, got {len}"
+            ),
+            Self::InvalidFilterBank(reason) => write!(f, "invalid filter bank: {reason}"),
+            Self::UnsupportedWavelet { family, order } => {
+                write!(f, "unsupported {family} wavelet order {order}")
+            }
+            Self::InvalidLevel { requested, maximum } => write!(
+                f,
+                "decomposition level {requested} exceeds the boundary-safe maximum {maximum}"
+            ),
+        }
+    }
+}
+
+impl Error for WaveletError {}

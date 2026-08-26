@@ -1,0 +1,13 @@
+target/
+artifacts/
+coverage/
+
+# Keep named seeds but ignore hash-named corpus discoveries.
+corpus/**
+!corpus/
+!corpus/dwt_roundtrip/
+!corpus/dwt_roundtrip/seed-*.bin
+!corpus/wavedec_roundtrip/
+!corpus/wavedec_roundtrip/seed-*.bin
+!corpus/custom_filter_bank/
+!corpus/custom_filter_bank/seed-*.bin

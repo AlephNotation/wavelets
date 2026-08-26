@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-targets --all-features
+
+  quality:
+    name: Formatting, lints, docs, and generated sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: python3 -m pip install --disable-pip-version-check -r tools/requirements-coefficients.txt
+      - run: python3 tools/generate_builtin_coefficients.py --check
+      - run: python3 tools/generate_fuzz_seeds.py --check
+
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+      - run: cargo check --lib
+
+  aarch64:
+    name: Check aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - run: cargo check --lib --target aarch64-unknown-linux-gnu
