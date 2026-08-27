@@ -879,6 +879,8 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "hotpath",
+ "serde",
+ "serde_json",
  "wavelets",
 ]
 

@@ -14,6 +14,8 @@ hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 
 [dependencies]
 hotpath = { version = "=0.24.0", optional = true, default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
 wavelets = { path = ".." }
 
 [dev-dependencies]
@@ -34,6 +36,12 @@ harness = false
 name = "profile"
 path = "src/bin/profile.rs"
 required-features = ["hotpath"]
+bench = false
+
+[[bin]]
+name = "wavelets-compare-runner"
+path = "src/bin/wavelets_compare_runner.rs"
+bench = false
 
 # Keep benchmark-only dependencies out of the library package.
 [workspace]

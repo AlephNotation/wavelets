@@ -58,6 +58,7 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu
       - run: cargo check --lib --target aarch64-unknown-linux-gnu
+      - run: cargo check --manifest-path benchmarks/Cargo.toml --bin wavelets-compare-runner --target aarch64-unknown-linux-gnu
 
   benchmarks:
     name: Check benchmark tooling
@@ -65,4 +66,24 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --manifest-path benchmarks/Cargo.toml --all-targets --all-features
+        with:
+          components: clippy
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: cargo clippy --manifest-path benchmarks/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: sudo apt-get update
+      - run: sudo apt-get install --yes libgsl-dev
+      - run: python3 -m pip install --disable-pip-version-check -r benchmarks/requirements-dev.txt
+      - run: ruff check benchmarks/compare
+      - run: ruff format --check benchmarks/compare
+      - run: python3 -m py_compile benchmarks/compare/compare.py benchmarks/compare/pywavelets_runner.py
+      - name: Smoke-test cross-library comparison
+        run: >-
+          python3 benchmarks/compare/compare.py
+          --samples 3
+          --sample-ms 1
+          --warmup-batches 1
+          --filter multilevel/forward/f64/db1/periodization/1024
+          --gsl
+          --output /tmp/wavelets-comparison-smoke.json

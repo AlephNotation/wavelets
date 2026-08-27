@@ -45,7 +45,9 @@ nightly toolchain.
 The repository's independent `benchmarks/` package keeps performance tooling
 out of the library's dependency graph. Criterion measures uninstrumented
 throughput and planning cost; an opt-in Hotpath driver profiles where
-representative runs spend time and allocate.
+representative runs spend time and allocate. A neutral in-process sampling
+harness compares both Rust execution APIs with PyWavelets and the genuinely
+compatible subset of GSL.
 
 ```rust
 use wavelets::{Boundary, DwtPlanner, Wavelet};
