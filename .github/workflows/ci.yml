@@ -87,3 +87,31 @@ jobs:
           --filter multilevel/forward/f64/db1/periodization/1024
           --gsl
           --output /tmp/wavelets-comparison-smoke.json
+
+  python:
+    name: Python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python -m pip install --disable-pip-version-check -r python/requirements-dev.txt
+      - run: cargo fmt --manifest-path python/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path python/Cargo.toml --all-targets -- -D warnings
+      - run: ruff check benchmarks/compare/python_api.py python/python python/tests
+      - run: ruff format --check benchmarks/compare/python_api.py python/python python/tests
+      - run: maturin build --release --manifest-path python/Cargo.toml --out /tmp/wavelets-wheels
+      - run: python -m pip install --no-deps /tmp/wavelets-wheels/*.whl
+      - run: python -m pytest python/tests -q
+      - name: Smoke-test same-interpreter comparison
+        run: >-
+          python benchmarks/compare/python_api.py
+          --samples 3
+          --sample-ms 1
+          --warmup-batches 1
+          --filter single_level/forward/f64/db4/symmetric/4096
+          --output /tmp/wavelets-python-api-smoke.json

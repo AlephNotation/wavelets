@@ -43,6 +43,28 @@ let reconstructed = idwt(&approx, &detail, &wavelet, boundary)?;
 
 Move to `DwtPlanner` when the signal length and transform configuration repeat.
 
+## Python bindings
+
+The repository also contains an unpublished `wavelets-rs` Python package for
+same-interpreter evaluation against PyWavelets. It exposes reusable plans over
+contiguous NumPy `float32` and `float64` arrays and releases the GIL during
+transform execution:
+
+```python
+import numpy as np
+import wavelets_rs
+
+signal = np.arange(4096, dtype=np.float64)
+plan = wavelets_rs.plan_dwt(len(signal), "db4", mode="symmetric")
+approx, detail = plan.forward(signal)
+reconstructed = plan.inverse(approx, detail)
+```
+
+Build and test it with the instructions in [python/README.md](python/README.md).
+The Python benchmark reports both reused-plan and cold plan-plus-execute
+timings, so an upstream backend discussion does not depend on hidden setup
+costs.
+
 ## Fuzzing
 
 Fuzz targets live in the independent `fuzz/` workspace so nightly-only tooling

@@ -113,3 +113,35 @@ of `2.00x` means PyWavelets took twice as long as the Rust reusable-buffer API.
 Reports record installed distribution and module-reported versions, compiler
 flags, CPU model, operating system, enabled ISA, batch sizes, checksums, and
 every timing sample.
+
+## Same-interpreter Python comparison
+
+The Python binding comparison imports both `wavelets_rs` and PyWavelets into
+the same CPython interpreter and passes the same NumPy inputs to each. This
+removes the language-boundary asymmetry from the native comparison above.
+
+Create the development environment and build the extension from the repository
+root:
+
+```text
+python3 -m venv python/.venv
+python/.venv/bin/python -m pip install -r python/requirements-dev.txt
+(cd python && .venv/bin/maturin develop --release)
+```
+
+Run the complete canonical matrix:
+
+```text
+python/.venv/bin/python benchmarks/compare/python_api.py
+```
+
+Every case reports two `wavelets-rs` paths. `planned` reuses a plan, matching
+the package's intended repeated-transform API. `cold` constructs the wavelet
+and plan inside every timed call, providing a conservative bound for an
+uncached backend integration. PyWavelets receives a preconstructed
+`pywt.Wavelet`, as it would in a tuned application. All paths create their
+NumPy outputs inside the timer, and inverse cases pass the same PyWavelets
+coefficient arrays to both engines. The harness validates complete outputs
+before timing, calibrates each engine independently, rotates their execution
+order, and retains every raw sample in
+`benchmarks/reports/python-api.json`.

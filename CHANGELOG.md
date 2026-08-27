@@ -16,6 +16,10 @@ All notable changes to `wavelets` are documented here.
   reconstruction.
 - Made the profiling driver configurable across precision, wavelet, boundary,
   and signal length.
+- Added safe PyO3/NumPy bindings for reusable single-level and multilevel
+  `f32`/`f64` plans.
+- Added a same-interpreter Python benchmark that reports both reusable-plan and
+  cold plan-plus-execute performance against PyWavelets with raw samples.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 

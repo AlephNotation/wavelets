@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "wavelets-rs"
+version = "0.1.0a4"
+description = "Safe, plan-once discrete wavelet transforms powered by Rust"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Tynan Daly" }]
+dependencies = ["numpy>=1.25"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Repository = "https://github.com/AlephNotation/wavelets"
+
+[tool.maturin]
+python-source = "python"
+module-name = "wavelets_rs._wavelets_rs"

@@ -473,7 +473,7 @@ def source_metadata() -> dict[str, Any]:
         check=False,
     )
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
         cwd=REPOSITORY_ROOT,
         text=True,
         capture_output=True,
