@@ -9,7 +9,7 @@ normal allocating Python API.
 ## Apple M4 Max / NEON
 
 Measured on macOS 15.6 with an Apple M4 Max using the runtime-selected NEON
-backend. The source was clean commit `156fd8e3bcaf98959a5a7acf64aaf74aa70f7afd`
+backend. The source was clean commit `2c965ba5874d7036610505bb29e9ba23a78202a5`
 (`wavelets` 0.1.0-alpha.4), compiled with Rust 1.98's release profile and no
 additional `RUSTFLAGS`. The comparison used Python 3.14.6, NumPy 2.5.2,
 PyWavelets distribution 1.9.0 (whose module reports 1.8.0), and GSL 2.8.
@@ -26,17 +26,17 @@ Signal length 4,096, db4, symmetric extension:
 
 | Precision | Transform | Rust allocating | Rust `into` | PyWavelets | PyWavelets / `into` |
 | --- | --- | ---: | ---: | ---: | ---: |
-| f64 | single forward | 3.09 us | 2.77 us | 9.73 us | 3.52x |
-| f64 | single inverse | 2.51 us | 2.19 us | 6.57 us | 3.01x |
-| f64 | multilevel forward | 7.10 us | 6.44 us | 30.38 us | 4.72x |
-| f64 | multilevel inverse | 5.06 us | 4.49 us | 21.26 us | 4.73x |
-| f32 | single forward | 1.63 us | 1.52 us | 9.44 us | 6.21x |
-| f32 | single inverse | 1.33 us | 1.10 us | 6.10 us | 5.55x |
-| f32 | multilevel forward | 3.68 us | 3.56 us | 30.45 us | 8.55x |
-| f32 | multilevel inverse | 2.70 us | 2.36 us | 21.73 us | 9.20x |
+| f64 | single forward | 2.57 us | 2.22 us | 10.01 us | 4.51x |
+| f64 | single inverse | 2.15 us | 1.92 us | 6.39 us | 3.33x |
+| f64 | multilevel forward | 5.89 us | 4.99 us | 31.53 us | 6.32x |
+| f64 | multilevel inverse | 4.49 us | 3.95 us | 21.78 us | 5.51x |
+| f32 | single forward | 1.41 us | 1.22 us | 10.00 us | 8.21x |
+| f32 | single inverse | 1.16 us | 989.41 ns | 6.48 us | 6.55x |
+| f32 | multilevel forward | 3.27 us | 2.97 us | 31.25 us | 10.52x |
+| f32 | multilevel inverse | 2.43 us | 2.10 us | 22.21 us | 10.59x |
 
 Across all 70 canonical cases, PyWavelets divided by Rust `into` ranged from
-1.84x to 29.87x, with a median of 3.63x. Small-signal ratios include the normal
+1.96x to 32.95x, with a median of 4.73x. Small-signal ratios include the normal
 fixed cost of crossing PyWavelets' Python API, so the representative table above
 is a better guide for sustained transform work.
 
@@ -48,12 +48,12 @@ to `wavelets` db1 with periodization. No other GSL cases are compared.
 
 | Length | Direction | Rust `into` | GSL | GSL / Rust |
 | ---: | --- | ---: | ---: | ---: |
-| 1,024 | forward | 536.97 ns | 2.36 us | 4.39x |
-| 1,024 | inverse | 743.22 ns | 2.26 us | 3.03x |
-| 4,096 | forward | 1.94 us | 8.97 us | 4.63x |
-| 4,096 | inverse | 2.82 us | 8.57 us | 3.04x |
-| 16,384 | forward | 8.98 us | 47.70 us | 5.31x |
-| 16,384 | inverse | 11.11 us | 43.63 us | 3.93x |
+| 1,024 | forward | 476.57 ns | 2.27 us | 4.76x |
+| 1,024 | inverse | 619.61 ns | 2.20 us | 3.55x |
+| 4,096 | forward | 1.69 us | 9.16 us | 5.43x |
+| 4,096 | inverse | 2.26 us | 8.84 us | 3.91x |
+| 16,384 | forward | 8.50 us | 45.49 us | 5.36x |
+| 16,384 | inverse | 8.88 us | 42.16 us | 4.75x |
 
 ## x86_64 / AVX2
 

@@ -74,7 +74,7 @@ Published Apple M4 Max/NEON results are available with every raw timing sample
 and the exact source revision in
 [benchmarks/results](benchmarks/results/README.md). For a 4,096-sample `f64`
 db4 transform with symmetric extension, the reusable-buffer API measured
-3.01–3.52x faster than PyWavelets for a single level and 4.72–4.73x faster for
+3.33–4.51x faster than PyWavelets for a single level and 5.51–6.32x faster for
 the complete multilevel transform. Representative x86_64/AVX2 results remain
 pending access to physical hardware; shared-runner timings are deliberately not
 presented as authoritative results.
