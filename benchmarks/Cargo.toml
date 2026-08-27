@@ -1,0 +1,39 @@
+[package]
+name = "wavelets-benchmarks"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
+
+[dependencies]
+hotpath = { version = "=0.24.0", optional = true, default-features = false }
+wavelets = { path = ".." }
+
+[dev-dependencies]
+criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support", "html_reports"] }
+
+[lib]
+bench = false
+
+[[bench]]
+name = "planning"
+harness = false
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[[bin]]
+name = "profile"
+path = "src/bin/profile.rs"
+required-features = ["hotpath"]
+
+# Keep benchmark-only dependencies out of the library package.
+[workspace]

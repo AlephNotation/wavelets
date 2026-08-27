@@ -127,7 +127,7 @@ impl Wavelet {
                 "filters must contain at least two coefficients",
             ));
         }
-        if len % 2 != 0 {
+        if !len.is_multiple_of(2) {
             return Err(WaveletError::InvalidFilterBank(
                 "filter length must be even",
             ));

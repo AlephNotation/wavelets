@@ -536,7 +536,7 @@ fn build_synthesis<T: WaveletNum>(
             for tap in 0..filter_len {
                 if full_index >= tap {
                     let difference = full_index - tap;
-                    if difference % 2 == 0 {
+                    if difference.is_multiple_of(2) {
                         let coefficient = difference / 2;
                         if coefficient < coeff_len {
                             terms.push(SynthesisTerm {

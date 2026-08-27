@@ -16,8 +16,8 @@ slice includes:
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.
 
-The remaining built-in families, SIMD kernels, and benchmarks remain before
-the first beta.
+The remaining built-in families, SIMD kernels, and published cross-library
+benchmark results remain before the first beta.
 
 The implementation invariants and deliberate departures from the initial
 sketch are recorded in [DESIGN.md](DESIGN.md).
@@ -29,15 +29,23 @@ does not affect the library's MSRV. Install `cargo-fuzz`, then list or run the
 targets with:
 
 ```text
-cargo fuzz list
-cargo fuzz run dwt_roundtrip -- -max_len=2051
-cargo fuzz run wavedec_roundtrip -- -max_len=2051
-cargo fuzz run custom_filter_bank -- -max_len=2051
+cargo +nightly fuzz list
+cargo +nightly fuzz run dwt_roundtrip -- -max_len=2051
+cargo +nightly fuzz run wavedec_roundtrip -- -max_len=2051
+cargo +nightly fuzz run custom_filter_bank -- -max_len=2051
 ```
 
 Named seed corpora are checked in. New public subsystems should add a bounded
 target using the shared decoders in `fuzz/src/lib.rs`; CI automatically builds
-and smoke-tests every target returned by `cargo fuzz list`.
+and smoke-tests every target returned by `cargo fuzz list` under its pinned
+nightly toolchain.
+
+## Performance
+
+The repository's independent `benchmarks/` package keeps performance tooling
+out of the library's dependency graph. Criterion measures uninstrumented
+throughput and planning cost; an opt-in Hotpath driver profiles where
+representative runs spend time and allocate.
 
 ```rust
 use wavelets::{Boundary, DwtPlanner, Wavelet};
