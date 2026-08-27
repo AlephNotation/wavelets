@@ -6,13 +6,23 @@ mod private {
 
     pub trait Sealed {}
 
-    pub trait SimdSynthesis: Sealed + Sized {
+    pub trait SimdKernels: Sealed + Sized {
+        fn forward_interior(
+            level: Level,
+            interior: crate::simd::AnalysisInterior<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize;
+
+        fn inverse_periodized(
+            level: Level,
+            interior: crate::simd::PeriodizedInterior<'_, Self>,
+            out: &mut [Self],
+        ) -> usize;
+
         fn inverse_linear(
             level: Level,
-            rec_lo: &[Self],
-            rec_hi: &[Self],
-            approx: &[Self],
-            detail: &[Self],
+            synthesis: crate::simd::LinearSynthesis<'_, Self>,
             out: &mut [Self],
         ) -> usize;
     }
@@ -20,35 +30,71 @@ mod private {
     impl Sealed for f32 {}
     impl Sealed for f64 {}
 
-    impl SimdSynthesis for f32 {
+    impl SimdKernels for f32 {
+        #[inline]
+        fn forward_interior(
+            level: Level,
+            interior: crate::simd::AnalysisInterior<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_interior(
+                simd, interior, approx, detail
+            ))
+        }
+
+        #[inline]
+        fn inverse_periodized(
+            level: Level,
+            interior: crate::simd::PeriodizedInterior<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_periodized(
+                simd, interior, out
+            ))
+        }
+
         #[inline]
         fn inverse_linear(
             level: Level,
-            rec_lo: &[Self],
-            rec_hi: &[Self],
-            approx: &[Self],
-            detail: &[Self],
+            synthesis: crate::simd::LinearSynthesis<'_, Self>,
             out: &mut [Self],
         ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_linear_f32(
-                simd, rec_lo, rec_hi, approx, detail, out
-            ))
+            dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
         }
     }
 
-    impl SimdSynthesis for f64 {
+    impl SimdKernels for f64 {
+        #[inline]
+        fn forward_interior(
+            level: Level,
+            interior: crate::simd::AnalysisInterior<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_interior(
+                simd, interior, approx, detail
+            ))
+        }
+
+        #[inline]
+        fn inverse_periodized(
+            level: Level,
+            interior: crate::simd::PeriodizedInterior<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_periodized(
+                simd, interior, out
+            ))
+        }
+
         #[inline]
         fn inverse_linear(
             level: Level,
-            rec_lo: &[Self],
-            rec_hi: &[Self],
-            approx: &[Self],
-            detail: &[Self],
+            synthesis: crate::simd::LinearSynthesis<'_, Self>,
             out: &mut [Self],
         ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_linear_f64(
-                simd, rec_lo, rec_hi, approx, detail, out
-            ))
+            dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
         }
     }
 }
@@ -59,7 +105,7 @@ mod private {
 /// [`f64`].
 pub trait WaveletNum:
     private::Sealed
-    + private::SimdSynthesis
+    + private::SimdKernels
     + Copy
     + Debug
     + Send
@@ -78,18 +124,42 @@ pub trait WaveletNum:
 }
 
 #[inline]
+pub(crate) fn forward_interior_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    interior: crate::simd::AnalysisInterior<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_interior(level, interior, approx, detail)
+    }
+}
+
+#[inline]
 pub(crate) fn inverse_linear_simd<T: WaveletNum>(
     level: fearless_simd::Level,
-    rec_lo: &[T],
-    rec_hi: &[T],
-    approx: &[T],
-    detail: &[T],
+    synthesis: crate::simd::LinearSynthesis<'_, T>,
     out: &mut [T],
 ) -> usize {
     if level.is_fallback() {
         0
     } else {
-        <T as private::SimdSynthesis>::inverse_linear(level, rec_lo, rec_hi, approx, detail, out)
+        <T as private::SimdKernels>::inverse_linear(level, synthesis, out)
+    }
+}
+
+#[inline]
+pub(crate) fn inverse_periodized_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    interior: crate::simd::PeriodizedInterior<'_, T>,
+    out: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::inverse_periodized(level, interior, out)
     }
 }
 

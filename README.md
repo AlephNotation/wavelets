@@ -12,13 +12,13 @@ slice includes:
 - high-precision, reproducibly generated Haar and `db1..db38` filters;
 - all nine PyWavelets boundary modes;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
-- safe portable SIMD synthesis with planner-cached runtime dispatch;
+- safe portable SIMD analysis and synthesis with planner-cached runtime dispatch;
 - reusable allocation-free multilevel plans and contiguous decompositions; and
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.
 
-The remaining built-in families, broader SIMD coverage, and published
-cross-library benchmark results remain before the first beta.
+The remaining built-in families and published cross-library benchmark results
+remain before the first beta.
 
 The implementation invariants and deliberate departures from the initial
 sketch are recorded in [DESIGN.md](DESIGN.md).
