@@ -38,8 +38,8 @@ cost is not mixed into execution cost.
 
 ## Hotpath
 
-The profiling driver uses public APIs with a 4,096-sample `f64` signal, db4,
-and symmetric extension. The default run makes 1,000 calls to each measured
+The profiling driver uses public APIs. It defaults to a 4,096-sample `f64`
+signal, db4, symmetric extension, and 1,000 calls to each measured
 allocation-free and allocating operation:
 
 ```text
@@ -56,8 +56,11 @@ cargo run --release --manifest-path benchmarks/Cargo.toml \
   --bin profile --features hotpath-alloc
 ```
 
-Set `WAVELETS_PROFILE_ITERATIONS` when a shorter smoke run or a longer profile
-is useful. The `hotpath-cpu` feature is also forwarded for CPU sampling.
+Use `WAVELETS_PROFILE_PRECISION` (`f32` or `f64`), `WAVELETS_PROFILE_LEN`,
+`WAVELETS_PROFILE_WAVELET`, and `WAVELETS_PROFILE_BOUNDARY` to select a
+different structural case. Set `WAVELETS_PROFILE_ITERATIONS` when a shorter
+smoke run or a longer profile is useful. The `hotpath-cpu` feature is also
+forwarded for CPU sampling.
 
 ## Cross-library comparison
 

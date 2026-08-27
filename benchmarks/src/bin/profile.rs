@@ -1,72 +1,79 @@
 use std::hint::black_box;
 
-use wavelets::{Boundary, Decomposition, Dwt, DwtPlanner, Level, WavedecPlan, Wavelet};
+use wavelets::{Boundary, Decomposition, Dwt, DwtPlanner, Level, WavedecPlan, Wavelet, WaveletNum};
 
-const SIGNAL_LEN: usize = 4_096;
+const DEFAULT_SIGNAL_LEN: usize = 4_096;
 const DEFAULT_ITERATIONS: usize = 1_000;
 
 #[hotpath::measure]
-fn single_forward_into(
-    plan: &dyn Dwt<f64>,
-    signal: &[f64],
-    approx: &mut [f64],
-    detail: &mut [f64],
-    scratch: &mut [f64],
+fn single_forward_into<T: WaveletNum>(
+    plan: &dyn Dwt<T>,
+    signal: &[T],
+    approx: &mut [T],
+    detail: &mut [T],
+    scratch: &mut [T],
 ) {
     plan.forward_into(signal, approx, detail, scratch);
 }
 
 #[hotpath::measure]
-fn single_inverse_into(
-    plan: &dyn Dwt<f64>,
-    approx: &[f64],
-    detail: &[f64],
-    reconstructed: &mut [f64],
-    scratch: &mut [f64],
+fn single_inverse_into<T: WaveletNum>(
+    plan: &dyn Dwt<T>,
+    approx: &[T],
+    detail: &[T],
+    reconstructed: &mut [T],
+    scratch: &mut [T],
 ) {
     plan.inverse_into(approx, detail, reconstructed, scratch);
 }
 
 #[hotpath::measure]
-fn multilevel_forward_into(
-    plan: &WavedecPlan<f64>,
-    signal: &[f64],
-    decomposition: &mut Decomposition<f64>,
-    scratch: &mut [f64],
+fn multilevel_forward_into<T: WaveletNum>(
+    plan: &WavedecPlan<T>,
+    signal: &[T],
+    decomposition: &mut Decomposition<T>,
+    scratch: &mut [T],
 ) {
     plan.forward_into(signal, decomposition, scratch);
 }
 
 #[hotpath::measure]
-fn multilevel_inverse_into(
-    plan: &WavedecPlan<f64>,
-    decomposition: &Decomposition<f64>,
-    reconstructed: &mut [f64],
-    scratch: &mut [f64],
+fn multilevel_inverse_into<T: WaveletNum>(
+    plan: &WavedecPlan<T>,
+    decomposition: &Decomposition<T>,
+    reconstructed: &mut [T],
+    scratch: &mut [T],
 ) {
     plan.inverse_into(decomposition, reconstructed, scratch);
 }
 
 #[hotpath::measure]
-fn single_forward_allocating(plan: &dyn Dwt<f64>, signal: &[f64]) -> (Vec<f64>, Vec<f64>) {
+fn single_forward_allocating<T: WaveletNum>(plan: &dyn Dwt<T>, signal: &[T]) -> (Vec<T>, Vec<T>) {
     plan.forward(signal)
 }
 
 #[hotpath::measure]
-fn single_inverse_allocating(plan: &dyn Dwt<f64>, approx: &[f64], detail: &[f64]) -> Vec<f64> {
+fn single_inverse_allocating<T: WaveletNum>(
+    plan: &dyn Dwt<T>,
+    approx: &[T],
+    detail: &[T],
+) -> Vec<T> {
     plan.inverse(approx, detail)
 }
 
 #[hotpath::measure]
-fn multilevel_forward_allocating(plan: &WavedecPlan<f64>, signal: &[f64]) -> Decomposition<f64> {
+fn multilevel_forward_allocating<T: WaveletNum>(
+    plan: &WavedecPlan<T>,
+    signal: &[T],
+) -> Decomposition<T> {
     plan.forward(signal)
 }
 
 #[hotpath::measure]
-fn multilevel_inverse_allocating(
-    plan: &WavedecPlan<f64>,
-    decomposition: &Decomposition<f64>,
-) -> Vec<f64> {
+fn multilevel_inverse_allocating<T: WaveletNum>(
+    plan: &WavedecPlan<T>,
+    decomposition: &Decomposition<T>,
+) -> Vec<T> {
     plan.inverse(decomposition)
 }
 
@@ -76,28 +83,60 @@ fn main() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_ITERATIONS);
-    let signal: Vec<_> = (0..SIGNAL_LEN)
+    let signal_len = std::env::var("WAVELETS_PROFILE_LEN")
+        .ok()
+        .map(|value| value.parse().expect("profile length must be an integer"))
+        .unwrap_or(DEFAULT_SIGNAL_LEN);
+    let wavelet_name =
+        std::env::var("WAVELETS_PROFILE_WAVELET").unwrap_or_else(|_| "db4".to_owned());
+    let boundary_name =
+        std::env::var("WAVELETS_PROFILE_BOUNDARY").unwrap_or_else(|_| "symmetric".to_owned());
+    let precision =
+        std::env::var("WAVELETS_PROFILE_PRECISION").unwrap_or_else(|_| "f64".to_owned());
+    let wavelet: Wavelet = wavelet_name
+        .parse()
+        .expect("profile wavelet must be supported");
+    let boundary: Boundary = boundary_name
+        .parse()
+        .expect("profile boundary must be supported");
+    eprintln!(
+        "profiling {precision}/{wavelet_name}/{boundary_name}/{signal_len} for {iterations} iterations"
+    );
+
+    match precision.as_str() {
+        "f32" => profile::<f32>(signal_len, iterations, &wavelet, boundary),
+        "f64" => profile::<f64>(signal_len, iterations, &wavelet, boundary),
+        _ => panic!("profile precision must be f32 or f64"),
+    }
+}
+
+fn profile<T: WaveletNum>(
+    signal_len: usize,
+    iterations: usize,
+    wavelet: &Wavelet,
+    boundary: Boundary,
+) {
+    let signal: Vec<_> = (0..signal_len)
         .map(|index| {
             let x = index as f64;
-            (x * 0.013).sin() + 0.25 * (x * 0.071).cos() + (index % 17) as f64 / 17.0
+            T::from_f64((x * 0.013).sin() + 0.25 * (x * 0.071).cos() + (index % 17) as f64 / 17.0)
         })
         .collect();
-    let wavelet = Wavelet::daubechies(4).expect("db4 is built in");
-    let mut planner = DwtPlanner::<f64>::new();
+    let mut planner = DwtPlanner::<T>::new();
     let single = planner
-        .plan_dwt(SIGNAL_LEN, &wavelet, Boundary::Symmetric)
+        .plan_dwt(signal_len, wavelet, boundary)
         .expect("profile case is valid");
     let multilevel = planner
-        .plan_wavedec(SIGNAL_LEN, &wavelet, Boundary::Symmetric, Level::Max)
+        .plan_wavedec(signal_len, wavelet, boundary, Level::Max)
         .expect("profile case is valid");
 
-    let mut approx = vec![0.0; single.coeff_len()];
-    let mut detail = vec![0.0; single.coeff_len()];
-    let mut single_output = vec![0.0; SIGNAL_LEN];
-    let mut single_scratch = vec![0.0; single.scratch_len()];
+    let mut approx = vec![T::zero(); single.coeff_len()];
+    let mut detail = vec![T::zero(); single.coeff_len()];
+    let mut single_output = vec![T::zero(); signal_len];
+    let mut single_scratch = vec![T::zero(); single.scratch_len()];
     let mut decomposition = multilevel.allocate_decomposition();
-    let mut multilevel_output = vec![0.0; SIGNAL_LEN];
-    let mut multilevel_scratch = vec![0.0; multilevel.scratch_len()];
+    let mut multilevel_output = vec![T::zero(); signal_len];
+    let mut multilevel_scratch = vec![T::zero(); multilevel.scratch_len()];
 
     for _ in 0..iterations {
         single_forward_into(

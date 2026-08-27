@@ -163,6 +163,19 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
     interior: PeriodizedInterior<'_, T>,
     out: &mut [T],
 ) -> usize {
+    match interior.second_offset {
+        0 => inverse_periodized_offset::<_, _, 0>(simd, interior, out),
+        1 => inverse_periodized_offset::<_, _, 1>(simd, interior, out),
+        _ => unreachable!("periodized synthesis phases are at most one coefficient apart"),
+    }
+}
+
+#[inline(always)]
+fn inverse_periodized_offset<S: Simd, T: SimdSample<S>, const OFFSET: usize>(
+    simd: S,
+    interior: PeriodizedInterior<'_, T>,
+    out: &mut [T],
+) -> usize {
     let lanes = T::Vector::N;
     let pair_count = out.len() / 2;
     let vectorized_pairs = pair_count - pair_count % lanes;
@@ -170,7 +183,7 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
     let paired_pairs = pair_count - pair_count % paired_batch;
 
     for pair in (0..paired_pairs).step_by(paired_batch) {
-        inverse_periodized_batch::<_, _, 2>(
+        inverse_periodized_batch::<_, _, 2, OFFSET>(
             simd,
             &interior,
             out,
@@ -178,7 +191,7 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
         );
     }
     if paired_pairs < vectorized_pairs {
-        inverse_periodized_batch::<_, _, 1>(
+        inverse_periodized_batch::<_, _, 1, OFFSET>(
             simd,
             &interior,
             out,
@@ -190,7 +203,12 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
 }
 
 #[inline(always)]
-fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+fn inverse_periodized_batch<
+    S: Simd,
+    T: SimdSample<S>,
+    const BATCHES: usize,
+    const OFFSET: usize,
+>(
     simd: S,
     interior: &PeriodizedInterior<'_, T>,
     out: &mut [T],
@@ -202,16 +220,12 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let second_hi = interior.second_hi;
     let approx = interior.approx;
     let detail = interior.detail;
-    let second_offset = interior.second_offset;
     let lanes = T::Vector::N;
     let filter_len = first_lo.len();
     let first_start = first_coefficient + 1 - filter_len;
-    let second_start = first_start + second_offset;
-    let input_len = filter_len + BATCHES * lanes - 1;
-    let first_approx = &approx[first_start..first_start + input_len];
-    let first_detail = &detail[first_start..first_start + input_len];
-    let second_approx = &approx[second_start..second_start + input_len];
-    let second_detail = &detail[second_start..second_start + input_len];
+    let input_len = filter_len + BATCHES * lanes - 1 + OFFSET;
+    let approx = &approx[first_start..first_start + input_len];
+    let detail = &detail[first_start..first_start + input_len];
     let (first_first_lo, first_lo) = first_lo
         .split_first()
         .expect("wavelet filters contain at least one polyphase tap");
@@ -233,13 +247,34 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let mut second_high: [T::Vector; BATCHES] =
         std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
 
+    let first_start = filter_len - 1;
+    let first_approximations: [T::Vector; BATCHES] = std::array::from_fn(|batch| {
+        let start = first_start + batch * lanes;
+        T::Vector::from_slice(simd, &approx[start..start + lanes])
+    });
+    let first_details: [T::Vector; BATCHES] = std::array::from_fn(|batch| {
+        let start = first_start + batch * lanes;
+        T::Vector::from_slice(simd, &detail[start..start + lanes])
+    });
     for batch in 0..BATCHES {
-        let start = filter_len - 1 + batch * lanes;
-        let first_approximation = T::Vector::from_slice(simd, &first_approx[start..start + lanes]);
-        let first_detail = T::Vector::from_slice(simd, &first_detail[start..start + lanes]);
-        let second_approximation =
-            T::Vector::from_slice(simd, &second_approx[start..start + lanes]);
-        let second_detail = T::Vector::from_slice(simd, &second_detail[start..start + lanes]);
+        let first_approximation = first_approximations[batch];
+        let first_detail = first_details[batch];
+        let second_approximation = if OFFSET == 0 {
+            first_approximation
+        } else if batch + 1 < BATCHES {
+            first_approximation.slide::<1>(first_approximations[batch + 1])
+        } else {
+            let start = first_start + batch * lanes;
+            T::Vector::from_slice(simd, &approx[start + OFFSET..start + OFFSET + lanes])
+        };
+        let second_detail = if OFFSET == 0 {
+            first_detail
+        } else if batch + 1 < BATCHES {
+            first_detail.slide::<1>(first_details[batch + 1])
+        } else {
+            let start = first_start + batch * lanes;
+            T::Vector::from_slice(simd, &detail[start + OFFSET..start + OFFSET + lanes])
+        };
         first_low[batch] = first_approximation * *first_first_lo;
         first_high[batch] = first_detail * *first_first_hi;
         second_low[batch] = second_approximation * *first_second_lo;
@@ -254,14 +289,33 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
         .enumerate()
     {
         let window_start = filter_len - 2 - tap;
-        for batch in 0..BATCHES {
+        let first_approximations: [T::Vector; BATCHES] = std::array::from_fn(|batch| {
             let start = window_start + batch * lanes;
-            let first_approximation =
-                T::Vector::from_slice(simd, &first_approx[start..start + lanes]);
-            let first_detail = T::Vector::from_slice(simd, &first_detail[start..start + lanes]);
-            let second_approximation =
-                T::Vector::from_slice(simd, &second_approx[start..start + lanes]);
-            let second_detail = T::Vector::from_slice(simd, &second_detail[start..start + lanes]);
+            T::Vector::from_slice(simd, &approx[start..start + lanes])
+        });
+        let first_details: [T::Vector; BATCHES] = std::array::from_fn(|batch| {
+            let start = window_start + batch * lanes;
+            T::Vector::from_slice(simd, &detail[start..start + lanes])
+        });
+        for batch in 0..BATCHES {
+            let first_approximation = first_approximations[batch];
+            let first_detail = first_details[batch];
+            let second_approximation = if OFFSET == 0 {
+                first_approximation
+            } else if batch + 1 < BATCHES {
+                first_approximation.slide::<1>(first_approximations[batch + 1])
+            } else {
+                let start = window_start + batch * lanes;
+                T::Vector::from_slice(simd, &approx[start + OFFSET..start + OFFSET + lanes])
+            };
+            let second_detail = if OFFSET == 0 {
+                first_detail
+            } else if batch + 1 < BATCHES {
+                first_detail.slide::<1>(first_details[batch + 1])
+            } else {
+                let start = window_start + batch * lanes;
+                T::Vector::from_slice(simd, &detail[start + OFFSET..start + OFFSET + lanes])
+            };
             first_low[batch] = first_approximation.mul_add(*first_lo, first_low[batch]);
             first_high[batch] = first_detail.mul_add(*first_hi, first_high[batch]);
             second_low[batch] = second_approximation.mul_add(*second_lo, second_low[batch]);
@@ -406,7 +460,10 @@ fn inverse_linear_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
 mod tests {
     use fearless_simd::{Level, dispatch};
 
-    use super::{AnalysisInterior, LinearSynthesis, forward_interior, inverse_linear};
+    use super::{
+        AnalysisInterior, LinearSynthesis, PeriodizedInterior, forward_interior, inverse_linear,
+        inverse_periodized,
+    };
 
     macro_rules! kernel_test {
         ($name:ident, $sample:ty, $tolerance:expr) => {
@@ -500,6 +557,64 @@ mod tests {
                 assert!(out[2 * inverse_pairs..]
                     .iter()
                     .all(|&sample| sample == -12_345.0));
+
+                let first_lo: [$sample; 4] = [0.13, -0.29, 0.47, 0.71];
+                let first_hi: [$sample; 4] = [-0.61, 0.43, 0.17, -0.31];
+                let second_lo: [$sample; 4] = [0.23, 0.67, -0.37, 0.11];
+                let second_hi: [$sample; 4] = [0.53, -0.19, 0.41, -0.73];
+                let approx: Vec<$sample> = (0..64)
+                    .map(|index| index as $sample * 0.09 - 0.8)
+                    .collect();
+                let detail: Vec<$sample> = (0..64)
+                    .map(|index| index as $sample * -0.04 + 1.3)
+                    .collect();
+
+                for second_offset in 0..=1 {
+                    let mut out = vec![-12_345.0; 27];
+                    let inverse_pairs = dispatch!(Level::new(), simd => inverse_periodized(
+                        simd,
+                        PeriodizedInterior {
+                            first_lo: &first_lo,
+                            first_hi: &first_hi,
+                            second_lo: &second_lo,
+                            second_hi: &second_hi,
+                            approx: &approx,
+                            detail: &detail,
+                            first_coefficient: first_lo.len() - 1,
+                            second_offset,
+                        },
+                        &mut out
+                    ));
+
+                    assert!(inverse_pairs > 0);
+                    assert!(inverse_pairs <= out.len() / 2);
+                    for pair in 0..inverse_pairs {
+                        let newest = first_lo.len() - 1 + pair;
+                        let mut first_low: $sample = 0.0;
+                        let mut first_high: $sample = 0.0;
+                        let mut second_low: $sample = 0.0;
+                        let mut second_high: $sample = 0.0;
+                        for tap in 0..first_lo.len() {
+                            let first_coefficient = newest - tap;
+                            let second_coefficient = first_coefficient + second_offset;
+                            first_low = approx[first_coefficient]
+                                .mul_add(first_lo[tap], first_low);
+                            first_high = detail[first_coefficient]
+                                .mul_add(first_hi[tap], first_high);
+                            second_low = approx[second_coefficient]
+                                .mul_add(second_lo[tap], second_low);
+                            second_high = detail[second_coefficient]
+                                .mul_add(second_hi[tap], second_high);
+                        }
+                        assert!((out[2 * pair] - (first_low + first_high)).abs() <= $tolerance);
+                        assert!(
+                            (out[2 * pair + 1] - (second_low + second_high)).abs() <= $tolerance
+                        );
+                    }
+                    assert!(out[2 * inverse_pairs..]
+                        .iter()
+                        .all(|&sample| sample == -12_345.0));
+                }
             }
         };
     }

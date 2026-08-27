@@ -12,6 +12,10 @@ All notable changes to `wavelets` are documented here.
 - Published the canonical Apple M4 Max/NEON comparison with all raw samples.
 - Batched independent analysis vectors and removed zero-initialized first FMAs
   from the analysis and synthesis kernels.
+- Reused shared and overlapping coefficient vectors in periodized SIMD
+  reconstruction.
+- Made the profiling driver configurable across precision, wavelet, boundary,
+  and signal length.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
