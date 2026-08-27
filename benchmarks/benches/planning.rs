@@ -15,7 +15,7 @@ fn criterion_config() -> Criterion {
 fn planning(criterion: &mut Criterion) {
     const LENGTH: usize = 4_096;
 
-    let wavelet = wavelet(4);
+    let wavelet = wavelet("db4");
     let mut group = criterion.benchmark_group("planning/f64");
 
     group.bench_function("single/cold/db4/symmetric/4096", |bencher| {

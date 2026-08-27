@@ -18,12 +18,23 @@ impl TransformCase {
         let order_selector = data.first().copied().unwrap_or(0);
         let mode_selector = data.get(1).copied().unwrap_or(0);
         Self {
-            wavelet: Wavelet::daubechies(usize::from(order_selector % 38) + 1)
-                .expect("normalized Daubechies order is supported"),
+            wavelet: built_in_wavelet(order_selector),
             boundary: boundary(mode_selector),
             use_f32: mode_selector & 0x80 != 0,
             samples: decode_samples(data.get(header_len..).unwrap_or_default()),
         }
+    }
+}
+
+fn built_in_wavelet(selector: u8) -> Wavelet {
+    const DAUBECHIES_COUNT: usize = 38;
+    const SYMLET_COUNT: usize = 19;
+
+    let index = usize::from(selector) % (DAUBECHIES_COUNT + SYMLET_COUNT);
+    if index < DAUBECHIES_COUNT {
+        Wavelet::daubechies(index + 1).expect("normalized Daubechies order is supported")
+    } else {
+        Wavelet::symlet(index - DAUBECHIES_COUNT + 2).expect("normalized Symlet order is supported")
     }
 }
 

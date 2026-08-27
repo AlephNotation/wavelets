@@ -27,6 +27,13 @@ fn signal_f64(len: usize) -> Vec<f64> {
         .collect()
 }
 
+fn orthogonal_wavelets() -> Vec<Wavelet> {
+    (1..=38)
+        .map(|order| Wavelet::daubechies(order).unwrap())
+        .chain((2..=20).map(|order| Wavelet::symlet(order).unwrap()))
+        .collect()
+}
+
 fn assert_reconstruction_f64(actual: &[f64], expected: &[f64], context: &str) {
     assert_eq!(actual.len(), expected.len(), "{context}");
     let scale = expected.iter().copied().map(f64::abs).fold(1.0, f64::max);
@@ -62,15 +69,14 @@ fn assert_reconstruction_f32(actual: &[f32], expected: &[f32], context: &str) {
 }
 
 #[test]
-fn daubechies_single_level_round_trip_matrix() {
+fn orthogonal_single_level_round_trip_matrix() {
     let mut planner_f64 = DwtPlanner::<f64>::new();
     let mut planner_f32 = DwtPlanner::<f32>::new();
 
-    for order in 1..=38 {
-        let wavelet = Wavelet::daubechies(order).unwrap();
+    for wavelet in orthogonal_wavelets() {
         for boundary in BOUNDARIES {
             for len in LENGTHS {
-                let context = format!("db{order} {boundary:?} len={len}");
+                let context = format!("{} {boundary:?} len={len}", wavelet.name());
                 let signal_f64 = signal_f64(len);
                 let plan_f64 = planner_f64.plan_dwt(len, &wavelet, boundary);
                 let plan_f32 = planner_f32.plan_dwt(len, &wavelet, boundary);
@@ -113,12 +119,11 @@ fn daubechies_single_level_round_trip_matrix() {
 }
 
 #[test]
-fn daubechies_multilevel_round_trip_matrix() {
-    for order in 1..=38 {
-        let wavelet = Wavelet::daubechies(order).unwrap();
+fn orthogonal_multilevel_round_trip_matrix() {
+    for wavelet in orthogonal_wavelets() {
         for boundary in BOUNDARIES {
             for len in LENGTHS {
-                let context = format!("db{order} {boundary:?} len={len}");
+                let context = format!("{} {boundary:?} len={len}", wavelet.name());
                 let signal_f64 = signal_f64(len);
                 let decomposition_f64 =
                     wavedec(&signal_f64, &wavelet, boundary, Level::Max).unwrap();
@@ -147,12 +152,11 @@ fn daubechies_multilevel_round_trip_matrix() {
 }
 
 #[test]
-fn every_daubechies_wavelet_preserves_periodized_energy() {
+fn every_orthogonal_wavelet_preserves_periodized_energy() {
     const EVEN_LENGTHS: [usize; 6] = [2, 16, 100, 1000, 4094, 4096];
     let mut planner = DwtPlanner::<f64>::new();
 
-    for order in 1..=38 {
-        let wavelet = Wavelet::daubechies(order).unwrap();
+    for wavelet in orthogonal_wavelets() {
         for len in EVEN_LENGTHS {
             let signal = signal_f64(len);
             let plan = planner
@@ -168,18 +172,21 @@ fn every_daubechies_wavelet_preserves_periodized_energy() {
             let tolerance = 1.0e-12 * signal_energy.max(1.0);
             assert!(
                 (coefficient_energy - signal_energy).abs() <= tolerance,
-                "db{order} len={len}: periodized energy {coefficient_energy:.17e} != {signal_energy:.17e}"
+                "{} len={len}: periodized energy {coefficient_energy:.17e} != {signal_energy:.17e}",
+                wavelet.name()
             );
         }
     }
 }
 
 #[test]
-fn daubechies_details_annihilate_polynomials_away_from_boundaries() {
+fn orthogonal_details_annihilate_polynomials_away_from_boundaries() {
     let mut planner = DwtPlanner::<f64>::new();
 
-    for order in 1..=38 {
-        let wavelet = Wavelet::daubechies(order).unwrap();
+    for wavelet in orthogonal_wavelets() {
+        let moments = wavelet
+            .vanishing_moments()
+            .expect("built-in orthogonal wavelets declare their moments");
         let filter_len = wavelet.filter_len();
         let signal_len = 4 * filter_len + 1;
         let plan = planner
@@ -187,7 +194,7 @@ fn daubechies_details_annihilate_polynomials_away_from_boundaries() {
             .unwrap();
         let interior_coefficient = filter_len;
 
-        for degree in 0..order {
+        for degree in 0..moments {
             let center = (signal_len - 1) as f64 / 2.0;
             let signal: Vec<_> = (0..signal_len)
                 .map(|index| ((index as f64 - center) / center).powi(degree as i32))
@@ -196,7 +203,8 @@ fn daubechies_details_annihilate_polynomials_away_from_boundaries() {
             let residual = detail[interior_coefficient].abs();
             assert!(
                 residual <= 5.0e-12,
-                "db{order} degree={degree}: interior detail residual {residual:.3e}"
+                "{} degree={degree}: interior detail residual {residual:.3e}",
+                wavelet.name()
             );
         }
     }

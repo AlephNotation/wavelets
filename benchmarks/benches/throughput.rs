@@ -17,12 +17,12 @@ fn benchmark_single_level<T: WaveletNum>(criterion: &mut Criterion, precision: &
 
     for Case {
         len,
-        order,
+        wavelet_name,
         boundary_name,
         boundary,
     } in representative_cases()
     {
-        let wavelet = wavelet(order);
+        let wavelet = wavelet(wavelet_name);
         let mut planner = DwtPlanner::<T>::new();
         let plan = planner
             .plan_dwt(len, &wavelet, boundary)
@@ -37,7 +37,7 @@ fn benchmark_single_level<T: WaveletNum>(criterion: &mut Criterion, precision: &
         group.throughput(Throughput::Elements(len as u64));
 
         group.bench_function(
-            format!("forward/db{order}/{boundary_name}/{len}"),
+            format!("forward/{wavelet_name}/{boundary_name}/{len}"),
             |bencher| {
                 bencher.iter(|| {
                     plan.forward_into(black_box(&signal), &mut approx, &mut detail, &mut scratch);
@@ -46,7 +46,7 @@ fn benchmark_single_level<T: WaveletNum>(criterion: &mut Criterion, precision: &
             },
         );
         group.bench_function(
-            format!("inverse/db{order}/{boundary_name}/{len}"),
+            format!("inverse/{wavelet_name}/{boundary_name}/{len}"),
             |bencher| {
                 bencher.iter(|| {
                     plan.inverse_into(
@@ -73,32 +73,44 @@ fn benchmark_multilevel<T: WaveletNum>(criterion: &mut Criterion, precision: &st
     ];
 
     let mut group = criterion.benchmark_group(format!("multilevel/{precision}"));
-    for (boundary_name, boundary) in BOUNDARIES {
-        let wavelet = wavelet(4);
-        let mut planner = DwtPlanner::<T>::new();
-        let plan = planner
-            .plan_wavedec(LENGTH, &wavelet, boundary, Level::Max)
-            .expect("benchmark case is valid");
-        let signal = signal::<T>(LENGTH);
-        let mut decomposition = plan.allocate_decomposition();
-        let mut reconstructed = vec![T::zero(); LENGTH];
-        let mut scratch = vec![T::zero(); plan.scratch_len()];
+    for wavelet_name in ["db4", "sym4"] {
+        for (boundary_name, boundary) in BOUNDARIES {
+            let wavelet = wavelet(wavelet_name);
+            let mut planner = DwtPlanner::<T>::new();
+            let plan = planner
+                .plan_wavedec(LENGTH, &wavelet, boundary, Level::Max)
+                .expect("benchmark case is valid");
+            let signal = signal::<T>(LENGTH);
+            let mut decomposition = plan.allocate_decomposition();
+            let mut reconstructed = vec![T::zero(); LENGTH];
+            let mut scratch = vec![T::zero(); plan.scratch_len()];
 
-        plan.forward_into(&signal, &mut decomposition, &mut scratch);
-        group.throughput(Throughput::Elements(LENGTH as u64));
+            plan.forward_into(&signal, &mut decomposition, &mut scratch);
+            group.throughput(Throughput::Elements(LENGTH as u64));
 
-        group.bench_function(format!("forward/db4/{boundary_name}/{LENGTH}"), |bencher| {
-            bencher.iter(|| {
-                plan.forward_into(black_box(&signal), &mut decomposition, &mut scratch);
-                black_box(decomposition.as_slice());
-            });
-        });
-        group.bench_function(format!("inverse/db4/{boundary_name}/{LENGTH}"), |bencher| {
-            bencher.iter(|| {
-                plan.inverse_into(black_box(&decomposition), &mut reconstructed, &mut scratch);
-                black_box(&reconstructed);
-            });
-        });
+            group.bench_function(
+                format!("forward/{wavelet_name}/{boundary_name}/{LENGTH}"),
+                |bencher| {
+                    bencher.iter(|| {
+                        plan.forward_into(black_box(&signal), &mut decomposition, &mut scratch);
+                        black_box(decomposition.as_slice());
+                    });
+                },
+            );
+            group.bench_function(
+                format!("inverse/{wavelet_name}/{boundary_name}/{LENGTH}"),
+                |bencher| {
+                    bencher.iter(|| {
+                        plan.inverse_into(
+                            black_box(&decomposition),
+                            &mut reconstructed,
+                            &mut scratch,
+                        );
+                        black_box(&reconstructed);
+                    });
+                },
+            );
+        }
     }
 
     group.finish();
@@ -107,7 +119,7 @@ fn benchmark_multilevel<T: WaveletNum>(criterion: &mut Criterion, precision: &st
 fn benchmark_allocating<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
     const LENGTH: usize = 4_096;
 
-    let wavelet = wavelet(4);
+    let wavelet = wavelet("db4");
     let signal = signal::<T>(LENGTH);
     let mut planner = DwtPlanner::<T>::new();
     let single = planner

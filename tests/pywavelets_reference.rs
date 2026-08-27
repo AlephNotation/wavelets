@@ -150,6 +150,7 @@ fn db2_periodization_matches_pywavelets() {
 #[derive(Deserialize)]
 struct Fixtures {
     generator: String,
+    coefficient_source: String,
     signals: Vec<FixtureSignal>,
     cases: Vec<FixtureCase>,
     multilevel_cases: Vec<MultilevelFixtureCase>,
@@ -183,6 +184,10 @@ fn generated_fixture_matrix_matches_pywavelets() {
     let fixtures: Fixtures =
         serde_json::from_str(include_str!("fixtures/pywavelets-1.8.0.json")).unwrap();
     assert_eq!(fixtures.generator, "PyWavelets 1.8.0");
+    assert_eq!(
+        fixtures.coefficient_source,
+        "wavelets high-precision spectral factorization"
+    );
     let signals: HashMap<_, _> = fixtures
         .signals
         .into_iter()
@@ -246,6 +251,10 @@ fn multilevel_fixture_matrix_matches_pywavelets() {
     let fixtures: Fixtures =
         serde_json::from_str(include_str!("fixtures/pywavelets-1.8.0.json")).unwrap();
     assert_eq!(fixtures.generator, "PyWavelets 1.8.0");
+    assert_eq!(
+        fixtures.coefficient_source,
+        "wavelets high-precision spectral factorization"
+    );
     let signals: HashMap<_, _> = fixtures
         .signals
         .into_iter()

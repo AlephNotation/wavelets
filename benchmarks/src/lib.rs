@@ -1,7 +1,7 @@
 use wavelets::{Boundary, Wavelet, WaveletNum};
 
 pub const SIGNAL_LENGTHS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
-pub const FILTER_ORDERS: [usize; 4] = [1, 4, 20, 38];
+pub const FILTER_WAVELETS: [&str; 5] = ["db1", "db4", "db20", "db38", "sym4"];
 pub const BOUNDARIES: [(&str, Boundary); 9] = [
     ("zero", Boundary::Zero),
     ("constant", Boundary::Constant),
@@ -17,7 +17,7 @@ pub const BOUNDARIES: [(&str, Boundary); 9] = [
 #[derive(Clone, Copy)]
 pub struct Case {
     pub len: usize,
-    pub order: usize,
+    pub wavelet_name: &'static str,
     pub boundary_name: &'static str,
     pub boundary: Boundary,
 }
@@ -30,18 +30,18 @@ pub fn representative_cases() -> Vec<Case> {
             &mut cases,
             Case {
                 len,
-                order: 4,
+                wavelet_name: "db4",
                 boundary_name: "symmetric",
                 boundary: Boundary::Symmetric,
             },
         );
     }
-    for order in FILTER_ORDERS {
+    for wavelet_name in FILTER_WAVELETS {
         push_unique(
             &mut cases,
             Case {
                 len: 4_096,
-                order,
+                wavelet_name,
                 boundary_name: "symmetric",
                 boundary: Boundary::Symmetric,
             },
@@ -52,7 +52,7 @@ pub fn representative_cases() -> Vec<Case> {
             &mut cases,
             Case {
                 len: 4_096,
-                order: 4,
+                wavelet_name: "db4",
                 boundary_name,
                 boundary,
             },
@@ -62,8 +62,8 @@ pub fn representative_cases() -> Vec<Case> {
     cases
 }
 
-pub fn wavelet(order: usize) -> Wavelet {
-    Wavelet::daubechies(order).expect("benchmark order is supported")
+pub fn wavelet(name: &str) -> Wavelet {
+    Wavelet::from_name(name).expect("benchmark wavelet is supported")
 }
 
 pub fn signal<T: WaveletNum>(len: usize) -> Vec<T> {
@@ -78,7 +78,7 @@ pub fn signal<T: WaveletNum>(len: usize) -> Vec<T> {
 fn push_unique(cases: &mut Vec<Case>, candidate: Case) {
     if !cases.iter().any(|case| {
         case.len == candidate.len
-            && case.order == candidate.order
+            && case.wavelet_name == candidate.wavelet_name
             && case.boundary == candidate.boundary
     }) {
         cases.push(candidate);

@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pywt
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_BATCH_ITERATIONS = 100_000_000
 BOUNDARIES = {
     "zero",
@@ -82,7 +82,7 @@ def validate_request(request: dict[str, Any]) -> None:
             "scope",
             "direction",
             "dtype",
-            "order",
+            "wavelet",
             "boundary",
             "len",
         }
@@ -96,8 +96,12 @@ def validate_request(request: dict[str, Any]) -> None:
             raise ValueError(f"invalid dtype in {case['id']}")
         if case["boundary"] not in BOUNDARIES:
             raise ValueError(f"invalid boundary in {case['id']}")
-        if not isinstance(case["order"], int) or not 1 <= case["order"] <= 38:
-            raise ValueError(f"invalid wavelet order in {case['id']}")
+        if not isinstance(case["wavelet"], str):
+            raise TypeError(f"invalid wavelet name in {case['id']}")
+        try:
+            pywt.Wavelet(case["wavelet"])
+        except ValueError as error:
+            raise ValueError(f"unsupported wavelet in {case['id']}") from error
         if not isinstance(case["len"], int) or case["len"] <= 0:
             raise ValueError(f"invalid signal length in {case['id']}")
         expected_id = case_id(case)
@@ -111,7 +115,7 @@ def validate_request(request: dict[str, Any]) -> None:
 def run_case(case: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     dtype = np.float32 if case["dtype"] == "f32" else np.float64
     values = np.asarray(signal(case["len"]), dtype=dtype)
-    wavelet = pywt.Wavelet(f"db{case['order']}")
+    wavelet = pywt.Wavelet(case["wavelet"])
     mode = case["boundary"]
 
     if case["scope"] == "single_level":
@@ -205,7 +209,7 @@ def output_checksum(output: Any) -> float:
 def case_id(case: dict[str, Any]) -> str:
     return (
         f"{case['scope']}/{case['direction']}/{case['dtype']}/"
-        f"db{case['order']}/{case['boundary']}/{case['len']}"
+        f"{case['wavelet']}/{case['boundary']}/{case['len']}"
     )
 
 

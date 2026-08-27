@@ -1,2 +1,3 @@
+-r requirements-coefficients.txt
 numpy==2.2.2
 PyWavelets==1.8.0

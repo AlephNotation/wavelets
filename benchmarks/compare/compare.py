@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HERE = Path(__file__).resolve().parent
 BENCHMARKS_DIR = HERE.parent
 REPOSITORY_ROOT = BENCHMARKS_DIR.parent
@@ -142,7 +142,7 @@ def canonical_cases() -> list[dict[str, Any]]:
     def add(
         scope: str,
         dtype: str,
-        order: int,
+        wavelet: str,
         boundary: str,
         length: int,
     ) -> None:
@@ -151,7 +151,7 @@ def canonical_cases() -> list[dict[str, Any]]:
                 "scope": scope,
                 "direction": direction,
                 "dtype": dtype,
-                "order": order,
+                "wavelet": wavelet,
                 "boundary": boundary,
                 "len": length,
             }
@@ -161,20 +161,21 @@ def canonical_cases() -> list[dict[str, Any]]:
                 cases.append(case)
 
     for length in (64, 256, 1_024, 4_096, 16_384):
-        add("single_level", "f64", 4, "symmetric", length)
-    add("single_level", "f32", 4, "symmetric", 4_096)
-    for order in (1, 20, 38):
-        add("single_level", "f64", order, "symmetric", 4_096)
+        add("single_level", "f64", "db4", "symmetric", length)
+    add("single_level", "f32", "db4", "symmetric", 4_096)
+    for wavelet in ("db1", "db20", "db38", "sym4"):
+        add("single_level", "f64", wavelet, "symmetric", 4_096)
     for boundary in BOUNDARIES:
-        add("single_level", "f64", 4, boundary, 4_096)
+        add("single_level", "f64", "db4", boundary, 4_096)
     for boundary in ("symmetric", "periodization"):
-        add("single_level", "f64", 4, boundary, 101)
+        add("single_level", "f64", "db4", boundary, 101)
     for dtype in ("f32", "f64"):
         for boundary in ("symmetric", "periodization"):
-            add("multilevel", dtype, 4, boundary, 4_096)
-    add("multilevel", "f64", 4, "symmetric", 16_384)
+            add("multilevel", dtype, "db4", boundary, 4_096)
+    add("multilevel", "f64", "sym4", "symmetric", 4_096)
+    add("multilevel", "f64", "db4", "symmetric", 16_384)
     for length in (1_024, 4_096, 16_384):
-        add("multilevel", "f64", 1, "periodization", length)
+        add("multilevel", "f64", "db1", "periodization", length)
     return cases
 
 
@@ -267,7 +268,7 @@ def is_gsl_compatible(case: dict[str, Any]) -> bool:
     return (
         case["scope"] == "multilevel"
         and case["dtype"] == "f64"
-        and case["order"] == 1
+        and case["wavelet"] == "db1"
         and case["boundary"] == "periodization"
         and length > 0
         and length & (length - 1) == 0
@@ -501,7 +502,7 @@ def format_ns(value: float) -> str:
 def case_id(case: dict[str, Any]) -> str:
     return (
         f"{case['scope']}/{case['direction']}/{case['dtype']}/"
-        f"db{case['order']}/{case['boundary']}/{case['len']}"
+        f"{case['wavelet']}/{case['boundary']}/{case['len']}"
     )
 
 

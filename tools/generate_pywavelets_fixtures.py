@@ -8,30 +8,85 @@ import json
 import math
 from pathlib import Path
 
+import mpmath as mp
 import pywt
+
+from generate_builtin_coefficients import daubechies, symlet
 
 
 SINGLE_LEVEL_LENGTHS = [*range(1, 17), 17, 31, 100, 101]
 MULTILEVEL_LENGTHS = [31, 100, 101, 1000]
-WAVELETS = ["haar", *(f"db{order}" for order in range(1, 39))]
+WAVELET_NAMES = [
+    "haar",
+    *(f"db{order}" for order in range(1, 39)),
+    *(f"sym{order}" for order in range(2, 21)),
+]
 
 
 def signal(length: int) -> list[float]:
     return [math.sin(index * 0.37) + (index % 7) - 3.0 for index in range(length)]
 
 
+def authored_dec_lo(name: str) -> list[float]:
+    if name == "haar":
+        coefficients = daubechies(1)
+    elif name.startswith("db"):
+        coefficients = daubechies(int(name.removeprefix("db")))
+    elif name.startswith("sym"):
+        coefficients = symlet(int(name.removeprefix("sym")))
+    else:
+        raise ValueError(f"unsupported fixture wavelet {name}")
+    return [float(value) for value in coefficients]
+
+
+def authored_wavelet(name: str) -> pywt.Wavelet:
+    dec_lo = authored_dec_lo(name)
+
+    # PyWavelets' catalog establishes the canonical family and orientation,
+    # while the transforms below use our independently authored binary64
+    # coefficients. Its older Symlet tables agree to at least ten decimals.
+    canonical = pywt.Wavelet(name).dec_lo
+    if len(dec_lo) != len(canonical):
+        raise ArithmeticError(
+            f"{name} filter length {len(dec_lo)} does not match "
+            f"PyWavelets length {len(canonical)}"
+        )
+    maximum_error = max(
+        abs(authored - reference)
+        for authored, reference in zip(dec_lo, canonical, strict=True)
+    )
+    if maximum_error > 2.0e-11:
+        raise ArithmeticError(
+            f"{name} does not match the canonical PyWavelets filter: "
+            f"maximum coefficient error {maximum_error:.3e}"
+        )
+
+    dec_hi = [
+        -coefficient if index % 2 == 0 else coefficient
+        for index, coefficient in enumerate(reversed(dec_lo))
+    ]
+    rec_lo = list(reversed(dec_lo))
+    rec_hi = list(reversed(dec_hi))
+    return pywt.Wavelet(
+        f"wavelets-{name}",
+        filter_bank=[dec_lo, dec_hi, rec_lo, rec_hi],
+    )
+
+
 def generate() -> dict[str, object]:
+    mp.mp.dps = 100
+    wavelets = {name: authored_wavelet(name) for name in WAVELET_NAMES}
     signals = [
         {"len": length, "values": signal(length)}
         for length in sorted(set(SINGLE_LEVEL_LENGTHS + MULTILEVEL_LENGTHS))
     ]
     cases = []
-    for wavelet_name in WAVELETS:
+    for wavelet_name, wavelet in wavelets.items():
         for mode in pywt.Modes.modes:
             for length in SINGLE_LEVEL_LENGTHS:
                 values = signal(length)
                 try:
-                    approx, detail = pywt.dwt(values, wavelet_name, mode)
+                    approx, detail = pywt.dwt(values, wavelet, mode)
                 except ValueError:
                     # PyWavelets rejects length-one [anti]reflect transforms.
                     continue
@@ -46,8 +101,7 @@ def generate() -> dict[str, object]:
                 )
 
     multilevel_cases = []
-    for wavelet_name in WAVELETS:
-        wavelet = pywt.Wavelet(wavelet_name)
+    for wavelet_name, wavelet in wavelets.items():
         for mode in pywt.Modes.modes:
             for length in MULTILEVEL_LENGTHS:
                 values = signal(length)
@@ -63,6 +117,7 @@ def generate() -> dict[str, object]:
                 )
     return {
         "generator": f"PyWavelets {pywt.__version__}",
+        "coefficient_source": "wavelets high-precision spectral factorization",
         "signals": signals,
         "cases": cases,
         "multilevel_cases": multilevel_cases,

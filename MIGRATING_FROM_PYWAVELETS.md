@@ -9,6 +9,7 @@ The API is Rust-native rather than Python source-compatible.
 | PyWavelets | `wavelets` |
 | --- | --- |
 | `pywt.Wavelet("db4")` | `"db4".parse::<Wavelet>()?` |
+| `pywt.Wavelet("sym4")` | `Wavelet::symlet(4)?` |
 | mode `"symmetric"` | `"symmetric".parse::<Boundary>()?` or `Boundary::Symmetric` |
 | `pywt.dwt(x, wavelet, mode)` | `dwt(&x, &wavelet, boundary)?` |
 | `pywt.idwt(c_a, c_d, wavelet, mode)` | `idwt(&c_a, &c_d, &wavelet, boundary)?` |
@@ -50,10 +51,10 @@ returns exactly that length. `Decomposition` retains the same information for
 ## Current boundary
 
 The compatible subset currently covers one-dimensional `f32` and `f64`
-transforms, Haar and `db1..db38`, custom filter banks, and all nine extension
-modes. Symlets, Coiflets, biorthogonal families, complex values, multidimensional
-axes, omitted single-level coefficient bands, and PyWavelets' other transform
-families are not implemented yet.
+transforms, Haar, `db1..db38`, `sym2..sym20`, custom filter banks, and all nine
+extension modes. Coiflets, biorthogonal families, complex values,
+multidimensional axes, omitted single-level coefficient bands, and PyWavelets'
+other transform families are not implemented yet.
 
 For repeated transforms, replace the allocating facade with `DwtPlanner` or
 `WavedecPlan`. Planning fixes the signal length, wavelet, boundary mode, buffer

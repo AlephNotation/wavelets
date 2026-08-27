@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use wavelets::{Boundary, DwtPlanner, Level, Wavelet, WaveletNum};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_BATCH_ITERATIONS: usize = 100_000_000;
 
 #[derive(Deserialize)]
@@ -33,7 +33,7 @@ struct Case {
     scope: Scope,
     direction: Direction,
     dtype: Dtype,
-    order: usize,
+    wavelet: String,
     boundary: String,
     len: usize,
 }
@@ -179,16 +179,14 @@ fn validate_request(request: &Request) -> Result<(), String> {
         if case.len == 0 {
             return Err(format!("{} has an empty signal", case.id));
         }
-        if !(1..=38).contains(&case.order) {
-            return Err(format!("{} has unsupported db{}", case.id, case.order));
-        }
+        Wavelet::from_name(&case.wavelet).map_err(|error| format!("{}: {error}", case.id))?;
         boundary(&case.boundary)?;
         let expected_id = format!(
-            "{}/{}/{}/db{}/{}/{}",
+            "{}/{}/{}/{}/{}/{}",
             case.scope.as_str(),
             case.direction.as_str(),
             case.dtype.as_str(),
-            case.order,
+            case.wavelet,
             case.boundary,
             case.len
         );
@@ -220,7 +218,7 @@ fn run_single_level<T: BenchNum>(
     config: Config,
 ) -> Result<Vec<BenchmarkResult>, Box<dyn Error>> {
     let signal = signal::<T>(case.len);
-    let wavelet = Wavelet::daubechies(case.order)?;
+    let wavelet = Wavelet::from_name(&case.wavelet)?;
     let mut planner = DwtPlanner::<T>::new();
     let plan = planner.plan_dwt(case.len, &wavelet, boundary(&case.boundary)?)?;
     let mut approx = vec![T::zero(); plan.coeff_len()];
@@ -300,7 +298,7 @@ fn run_multilevel<T: BenchNum>(
     config: Config,
 ) -> Result<Vec<BenchmarkResult>, Box<dyn Error>> {
     let signal = signal::<T>(case.len);
-    let wavelet = Wavelet::daubechies(case.order)?;
+    let wavelet = Wavelet::from_name(&case.wavelet)?;
     let mut planner = DwtPlanner::<T>::new();
     let plan = planner.plan_wavedec(case.len, &wavelet, boundary(&case.boundary)?, Level::Max)?;
     let mut decomposition = plan.allocate_decomposition();

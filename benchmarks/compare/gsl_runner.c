@@ -11,7 +11,7 @@
 #include <string.h>
 #include <time.h>
 
-#define SCHEMA_VERSION 1
+#define SCHEMA_VERSION 2
 #define MAX_BATCH_ITERATIONS 100000000ULL
 
 typedef struct {

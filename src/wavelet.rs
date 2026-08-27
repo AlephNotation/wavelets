@@ -105,12 +105,22 @@ impl Wavelet {
         ))
     }
 
-    /// Constructs a Symlet wavelet.
+    /// Constructs a least-asymmetric Symlet wavelet.
+    ///
+    /// Orders `sym2` through `sym20` are available.
     pub fn symlet(n: usize) -> Result<Self, WaveletError> {
-        Err(WaveletError::UnsupportedWavelet {
-            family: "Symlet",
-            order: n.to_string(),
-        })
+        let Some(dec_lo) = coefficients::symlet(n) else {
+            return Err(WaveletError::UnsupportedWavelet {
+                family: "Symlet",
+                order: n.to_string(),
+            });
+        };
+        Ok(Self::orthogonal_from_low_pass(
+            &format!("sym{n}"),
+            WaveletFamily::Symlet,
+            n,
+            dec_lo,
+        ))
     }
 
     /// Constructs a Coiflet wavelet.
@@ -366,16 +376,10 @@ mod tests {
     }
 
     #[test]
-    fn canonical_names_construct_or_identify_unimplemented_families() {
+    fn canonical_names_construct_built_ins() {
         assert_eq!(Wavelet::from_name("haar").unwrap().name(), "haar");
         assert_eq!("db4".parse::<Wavelet>().unwrap().name(), "db4");
-        assert!(matches!(
-            Wavelet::from_name("sym4"),
-            Err(WaveletError::UnsupportedWavelet {
-                family: "Symlet",
-                ..
-            })
-        ));
+        assert_eq!(Wavelet::from_name("sym4").unwrap().name(), "sym4");
         assert_eq!(
             Wavelet::from_name("db04").unwrap_err(),
             WaveletError::UnknownWavelet {
@@ -394,6 +398,20 @@ mod tests {
         }
         assert!(Wavelet::daubechies(0).is_err());
         assert!(Wavelet::daubechies(39).is_err());
+    }
+
+    #[test]
+    fn all_symlet_orders_are_available() {
+        for order in 2..=20 {
+            let wavelet = Wavelet::symlet(order).unwrap();
+            assert_eq!(wavelet.name(), format!("sym{order}"));
+            assert_eq!(wavelet.family(), WaveletFamily::Symlet);
+            assert_eq!(wavelet.filter_len(), 2 * order);
+            assert_eq!(wavelet.vanishing_moments(), Some(order));
+            assert!(wavelet.is_orthogonal());
+        }
+        assert!(Wavelet::symlet(1).is_err());
+        assert!(Wavelet::symlet(21).is_err());
     }
 
     #[test]
