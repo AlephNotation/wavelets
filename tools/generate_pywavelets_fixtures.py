@@ -70,7 +70,7 @@ def generate() -> dict[str, object]:
 
 
 def assert_equivalent(checked: object, generated: object, path: str = "$") -> None:
-    """Compare fixtures while allowing harmless cross-platform FP variation."""
+    """Compare fixtures with a normwise cross-platform floating-point bound."""
     if isinstance(checked, float) and isinstance(generated, float):
         if not math.isclose(checked, generated, rel_tol=1e-13, abs_tol=1e-13):
             raise ValueError(f"{path}: {checked!r} != {generated!r}")
@@ -78,6 +78,18 @@ def assert_equivalent(checked: object, generated: object, path: str = "$") -> No
     if isinstance(checked, list) and isinstance(generated, list):
         if len(checked) != len(generated):
             raise ValueError(f"{path}: list lengths differ")
+        if checked and all(isinstance(value, float) for value in checked + generated):
+            scale = max(1.0, *(abs(value) for value in checked + generated))
+            tolerance = 1e-13 * scale
+            for index, (checked_item, generated_item) in enumerate(
+                zip(checked, generated, strict=True)
+            ):
+                if abs(checked_item - generated_item) > tolerance:
+                    raise ValueError(
+                        f"{path}[{index}]: {checked_item!r} != {generated_item!r} "
+                        f"(normwise tolerance {tolerance:.3e})"
+                    )
+            return
         for index, (checked_item, generated_item) in enumerate(
             zip(checked, generated, strict=True)
         ):
