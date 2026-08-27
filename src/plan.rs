@@ -77,9 +77,9 @@ impl<T: WaveletNum> DwtPlanner<T> {
 
     /// Plans a one-level transform for signals of exactly `len` samples.
     ///
-    /// Planning validates the boundary/length combination and precomputes all
-    /// edge-extension and synthesis indices. Repeated identical requests reuse
-    /// the same live plan.
+    /// Planning validates the boundary/length combination and prepares the
+    /// edge-extension and polyphase filter layouts. Repeated identical requests
+    /// reuse the same live plan.
     pub fn plan_dwt(
         &mut self,
         len: usize,
@@ -170,21 +170,16 @@ enum SampleRule {
     Antireflect { index: isize },
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SynthesisTerm<T> {
-    coefficient: usize,
-    low: T,
-    high: T,
-}
-
 #[derive(Debug)]
 struct ScalarPlan<T> {
     signal_len: usize,
     coeff_len: usize,
     dec_lo: Box<[T]>,
     dec_hi: Box<[T]>,
+    rec_lo: Box<[T]>,
+    rec_hi: Box<[T]>,
     analysis: Box<[AnalysisOutput]>,
-    synthesis: Box<[Box<[SynthesisTerm<T>]>]>,
+    periodization: bool,
 }
 
 impl<T: WaveletNum> ScalarPlan<T> {
@@ -193,21 +188,96 @@ impl<T: WaveletNum> ScalarPlan<T> {
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
         let dec_lo: Box<[_]> = wavelet.dec_lo().iter().copied().map(T::from_f64).collect();
         let dec_hi: Box<[_]> = wavelet.dec_hi().iter().copied().map(T::from_f64).collect();
+        let rec_lo = polyphase_filter(wavelet.rec_lo());
+        let rec_hi = polyphase_filter(wavelet.rec_hi());
         let analysis = build_analysis(signal_len, coeff_len, filter_len, boundary);
-        let synthesis = build_synthesis::<T>(
-            signal_len,
-            coeff_len,
-            boundary,
-            wavelet.rec_lo(),
-            wavelet.rec_hi(),
-        );
         Self {
             signal_len,
             coeff_len,
             dec_lo,
             dec_hi,
+            rec_lo,
+            rec_hi,
             analysis,
-            synthesis,
+            periodization: boundary == Boundary::Periodization,
+        }
+    }
+
+    fn inverse_linear(&self, approx: &[T], detail: &[T], out: &mut [T]) {
+        let half_filter_len = self.rec_lo.len() / 2;
+        let (even_lo, odd_lo) = self.rec_lo.split_at(half_filter_len);
+        let (even_hi, odd_hi) = self.rec_hi.split_at(half_filter_len);
+
+        // Cropping the full convolution by `filter_len - 2` makes each output
+        // pair consume the same reversed coefficient window. Fusing both
+        // polyphase dots keeps that window hot and loads it only once.
+        for (coefficient, samples) in out.chunks_mut(2).enumerate() {
+            let coefficient_end = coefficient + half_filter_len;
+            let approx = &approx[coefficient..coefficient_end];
+            let detail = &detail[coefficient..coefficient_end];
+            let (first, second) = synthesis_pair(even_lo, even_hi, odd_lo, odd_hi, approx, detail);
+            samples[0] = first;
+            if samples.len() == 2 {
+                samples[1] = second;
+            }
+        }
+    }
+
+    fn inverse_periodized(&self, approx: &[T], detail: &[T], out: &mut [T]) {
+        let half_filter_len = self.rec_lo.len() / 2;
+        let (even_lo, odd_lo) = self.rec_lo.split_at(half_filter_len);
+        let (even_hi, odd_hi) = self.rec_hi.split_at(half_filter_len);
+        let shift = half_filter_len - 1;
+        let phases_are_swapped = !shift.is_multiple_of(2);
+        let mut first_coefficient = (shift / 2) % self.coeff_len;
+        let (first_lo, first_hi, second_lo, second_hi) = if phases_are_swapped {
+            (odd_lo, odd_hi, even_lo, even_hi)
+        } else {
+            (even_lo, even_hi, odd_lo, odd_hi)
+        };
+
+        for samples in out.chunks_mut(2) {
+            let second_coefficient = if phases_are_swapped {
+                increment_wrapping(first_coefficient, self.coeff_len)
+            } else {
+                first_coefficient
+            };
+
+            // Almost every periodic window is contiguous. Only windows that
+            // cross coefficient zero need the cyclic edge kernel.
+            let (first, second) = if first_coefficient + 1 >= half_filter_len
+                && second_coefficient + 1 >= half_filter_len
+            {
+                let first_start = first_coefficient + 1 - half_filter_len;
+                let second_start = second_coefficient + 1 - half_filter_len;
+                synthesis_pair_windows(
+                    (first_lo, first_hi),
+                    (second_lo, second_hi),
+                    (
+                        &approx[first_start..=first_coefficient],
+                        &detail[first_start..=first_coefficient],
+                    ),
+                    (
+                        &approx[second_start..=second_coefficient],
+                        &detail[second_start..=second_coefficient],
+                    ),
+                )
+            } else {
+                synthesis_pair_cyclic(
+                    (first_lo, first_hi),
+                    (second_lo, second_hi),
+                    approx,
+                    detail,
+                    first_coefficient,
+                    second_coefficient,
+                )
+            };
+            samples[0] = first;
+            if samples.len() == 2 {
+                samples[1] = second;
+            }
+
+            first_coefficient = increment_wrapping(first_coefficient, self.coeff_len);
         }
     }
 }
@@ -283,15 +353,117 @@ impl<T: WaveletNum> Dwt<T> for ScalarPlan<T> {
             "scratch buffer is too small"
         );
 
-        for (sample, terms) in out.iter_mut().zip(self.synthesis.iter()) {
-            let mut value = T::zero();
-            for term in terms.iter() {
-                value += term.low * approx[term.coefficient];
-                value += term.high * detail[term.coefficient];
-            }
-            *sample = value;
+        if self.periodization {
+            self.inverse_periodized(approx, detail, out);
+        } else {
+            self.inverse_linear(approx, detail, out);
         }
     }
+}
+
+fn polyphase_filter<T: WaveletNum>(filter: &[f64]) -> Box<[T]> {
+    debug_assert!(filter.len().is_multiple_of(2));
+    filter
+        .iter()
+        .step_by(2)
+        .chain(filter.iter().skip(1).step_by(2))
+        .copied()
+        .map(T::from_f64)
+        .collect()
+}
+
+#[inline(always)]
+fn synthesis_pair<T: WaveletNum>(
+    even_lo: &[T],
+    even_hi: &[T],
+    odd_lo: &[T],
+    odd_hi: &[T],
+    approx: &[T],
+    detail: &[T],
+) -> (T, T) {
+    let mut even = T::zero();
+    let mut odd = T::zero();
+    for ((((even_low, even_high), (odd_low, odd_high)), approximation), detail) in even_lo
+        .iter()
+        .zip(even_hi)
+        .zip(odd_lo.iter().zip(odd_hi))
+        .zip(approx.iter().rev())
+        .zip(detail.iter().rev())
+    {
+        even += *even_low * *approximation;
+        even += *even_high * *detail;
+        odd += *odd_low * *approximation;
+        odd += *odd_high * *detail;
+    }
+    (even, odd)
+}
+
+#[inline(always)]
+fn synthesis_pair_windows<T: WaveletNum>(
+    (first_lo, first_hi): (&[T], &[T]),
+    (second_lo, second_hi): (&[T], &[T]),
+    (first_approx, first_detail): (&[T], &[T]),
+    (second_approx, second_detail): (&[T], &[T]),
+) -> (T, T) {
+    let mut first = T::zero();
+    let mut second = T::zero();
+    for (
+        ((first_low, first_high), (second_low, second_high)),
+        ((first_approx, first_detail), (second_approx, second_detail)),
+    ) in first_lo
+        .iter()
+        .zip(first_hi)
+        .zip(second_lo.iter().zip(second_hi))
+        .zip(
+            first_approx
+                .iter()
+                .rev()
+                .zip(first_detail.iter().rev())
+                .zip(second_approx.iter().rev().zip(second_detail.iter().rev())),
+        )
+    {
+        first += *first_low * *first_approx;
+        first += *first_high * *first_detail;
+        second += *second_low * *second_approx;
+        second += *second_high * *second_detail;
+    }
+    (first, second)
+}
+
+#[inline(always)]
+fn synthesis_pair_cyclic<T: WaveletNum>(
+    (first_lo, first_hi): (&[T], &[T]),
+    (second_lo, second_hi): (&[T], &[T]),
+    approx: &[T],
+    detail: &[T],
+    first_coefficient: usize,
+    second_coefficient: usize,
+) -> (T, T) {
+    let mut first = T::zero();
+    let mut second = T::zero();
+    let mut first_coefficient = first_coefficient;
+    let mut second_coefficient = second_coefficient;
+    for (((first_low, first_high), second_low), second_high) in
+        first_lo.iter().zip(first_hi).zip(second_lo).zip(second_hi)
+    {
+        first += *first_low * approx[first_coefficient];
+        first += *first_high * detail[first_coefficient];
+        second += *second_low * approx[second_coefficient];
+        second += *second_high * detail[second_coefficient];
+        first_coefficient = decrement_wrapping(first_coefficient, approx.len());
+        second_coefficient = decrement_wrapping(second_coefficient, approx.len());
+    }
+    (first, second)
+}
+
+#[inline]
+fn increment_wrapping(value: usize, len: usize) -> usize {
+    if value + 1 == len { 0 } else { value + 1 }
+}
+
+#[inline]
+fn decrement_wrapping(value: usize, len: usize) -> usize {
+    if value == 0 { len - 1 } else { value - 1 }
 }
 
 pub(crate) fn coefficient_len(signal_len: usize, filter_len: usize, boundary: Boundary) -> usize {
@@ -501,57 +673,6 @@ fn antireflect_sample<T: WaveletNum>(signal: &[T], index: isize) -> T {
             }
         }
     }
-}
-
-fn build_synthesis<T: WaveletNum>(
-    signal_len: usize,
-    coeff_len: usize,
-    boundary: Boundary,
-    rec_lo: &[f64],
-    rec_hi: &[f64],
-) -> Box<[Box<[SynthesisTerm<T>]>]> {
-    let filter_len = rec_lo.len();
-    let mut outputs: Vec<Vec<SynthesisTerm<T>>> = (0..signal_len).map(|_| Vec::new()).collect();
-
-    if boundary == Boundary::Periodization {
-        let periodic_len = 2 * coeff_len;
-        let shift = (filter_len / 2 - 1) % periodic_len;
-        for coefficient in 0..coeff_len {
-            for tap in 0..filter_len {
-                let unshifted = (2 * coefficient + tap) % periodic_len;
-                let output = (unshifted + periodic_len - shift) % periodic_len;
-                if output < signal_len {
-                    outputs[output].push(SynthesisTerm {
-                        coefficient,
-                        low: T::from_f64(rec_lo[tap]),
-                        high: T::from_f64(rec_hi[tap]),
-                    });
-                }
-            }
-        }
-    } else {
-        let crop = filter_len - 2;
-        for (output, terms) in outputs.iter_mut().enumerate() {
-            let full_index = output + crop;
-            for tap in 0..filter_len {
-                if full_index >= tap {
-                    let difference = full_index - tap;
-                    if difference.is_multiple_of(2) {
-                        let coefficient = difference / 2;
-                        if coefficient < coeff_len {
-                            terms.push(SynthesisTerm {
-                                coefficient,
-                                low: T::from_f64(rec_lo[tap]),
-                                high: T::from_f64(rec_hi[tap]),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    outputs.into_iter().map(Vec::into_boxed_slice).collect()
 }
 
 #[cfg(test)]
