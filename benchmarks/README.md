@@ -81,6 +81,8 @@ Git revision and whether tracked source files were dirty during measurement.
 GitHub-hosted runners are suitable for integration smoke tests, but their
 timings are not published as representative hardware results.
 
+See the [published results](results/README.md) for the current hardware matrix.
+
 Use the general sampling and case filters for a short integration run:
 
 ```text

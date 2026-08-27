@@ -9,6 +9,7 @@ All notable changes to `wavelets` are documented here.
   `Decomposition::as_mut_slice`.
 - Added reproducible source-revision metadata to cross-library benchmark
   reports.
+- Published the canonical Apple M4 Max/NEON comparison with all raw samples.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
