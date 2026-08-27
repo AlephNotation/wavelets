@@ -72,12 +72,25 @@ compatible subset of GSL.
 
 Published Apple M4 Max/NEON results are available with every raw timing sample
 and the exact source revision in
-[benchmarks/results](benchmarks/results/README.md). For a 4,096-sample `f64`
-db4 transform with symmetric extension, the reusable-buffer API measured
-3.40–4.45x faster than PyWavelets for a single level and 5.30–6.46x faster for
-the complete multilevel transform. Representative x86_64/AVX2 results remain
-pending access to physical hardware; shared-runner timings are deliberately not
-presented as authoritative results.
+[benchmarks/results](benchmarks/results/README.md). These are median end-to-end
+execution times for a 4,096-sample db4 transform with symmetric extension;
+planning and input generation are outside the timer.
+
+| Precision | Transform | Rust allocating | Rust `into` | PyWavelets | PyWavelets / `into` |
+| --- | --- | ---: | ---: | ---: | ---: |
+| f64 | single forward | 2.57 us | 2.24 us | 9.97 us | 4.45x |
+| f64 | single inverse | 2.22 us | 1.94 us | 6.61 us | 3.40x |
+| f64 | multilevel forward | 6.07 us | 5.11 us | 33.00 us | 6.46x |
+| f64 | multilevel inverse | 4.68 us | 4.12 us | 21.86 us | 5.30x |
+| f32 | single forward | 1.42 us | 1.23 us | 9.91 us | 8.04x |
+| f32 | single inverse | 1.19 us | 998.62 ns | 6.57 us | 6.57x |
+| f32 | multilevel forward | 3.35 us | 3.05 us | 32.47 us | 10.63x |
+| f32 | multilevel inverse | 2.44 us | 2.15 us | 22.23 us | 10.33x |
+
+Across the complete 70-case matrix, PyWavelets divided by Rust `into` ranges
+from 2.34x to 32.98x, with a 4.65x median. Representative x86_64/AVX2 results
+remain pending access to physical hardware; shared-runner timings are
+deliberately not presented as authoritative results.
 
 ```rust
 use wavelets::{Boundary, DwtPlanner, Wavelet};
