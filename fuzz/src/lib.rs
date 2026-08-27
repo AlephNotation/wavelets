@@ -30,15 +30,45 @@ fn built_in_wavelet(selector: u8) -> Wavelet {
     const DAUBECHIES_COUNT: usize = 38;
     const SYMLET_COUNT: usize = 19;
     const COIFLET_COUNT: usize = 17;
+    const BIORTHOGONAL_ORDERS: [(usize, usize); 15] = [
+        (1, 1),
+        (1, 3),
+        (1, 5),
+        (2, 2),
+        (2, 4),
+        (2, 6),
+        (2, 8),
+        (3, 1),
+        (3, 3),
+        (3, 5),
+        (3, 7),
+        (3, 9),
+        (4, 4),
+        (5, 5),
+        (6, 8),
+    ];
 
-    let index = usize::from(selector) % (DAUBECHIES_COUNT + SYMLET_COUNT + COIFLET_COUNT);
+    let orthogonal_count = DAUBECHIES_COUNT + SYMLET_COUNT + COIFLET_COUNT;
+    let biorthogonal_count = BIORTHOGONAL_ORDERS.len();
+    let index = usize::from(selector) % (orthogonal_count + 2 * biorthogonal_count);
     if index < DAUBECHIES_COUNT {
         Wavelet::daubechies(index + 1).expect("normalized Daubechies order is supported")
     } else if index < DAUBECHIES_COUNT + SYMLET_COUNT {
         Wavelet::symlet(index - DAUBECHIES_COUNT + 2).expect("normalized Symlet order is supported")
-    } else {
+    } else if index < orthogonal_count {
         Wavelet::coiflet(index - DAUBECHIES_COUNT - SYMLET_COUNT + 1)
             .expect("normalized Coiflet order is supported")
+    } else {
+        let family_index = index - orthogonal_count;
+        let reverse = family_index >= biorthogonal_count;
+        let pair = BIORTHOGONAL_ORDERS[family_index % biorthogonal_count];
+        if reverse {
+            Wavelet::reverse_biorthogonal(pair.0, pair.1)
+                .expect("normalized reverse-biorthogonal pair is supported")
+        } else {
+            Wavelet::biorthogonal(pair.0, pair.1)
+                .expect("normalized biorthogonal pair is supported")
+        }
     }
 }
 

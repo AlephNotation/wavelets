@@ -9,8 +9,8 @@ The crate is pre-release and intentionally narrow. The current correctness
 slice includes:
 
 - immutable, cheaply cloned filter banks;
-- high-precision, reproducibly generated Haar, `db1..db38`, `sym2..sym20`, and
-  `coif1..coif17` filters;
+- high-precision, reproducibly generated Haar, `db1..db38`, `sym2..sym20`,
+  `coif1..coif17`, and all PyWavelets `bior`/`rbio` filters;
 - all nine PyWavelets boundary modes;
 - PyWavelets-style `dwt`/`idwt` convenience functions and canonical name parsing;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
@@ -19,8 +19,7 @@ slice includes:
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.
 
-Biorthogonal families and published cross-library benchmark results remain
-before the first beta.
+Published cross-library benchmark results remain before the first beta.
 
 See [Migrating from PyWavelets](MIGRATING_FROM_PYWAVELETS.md) for the direct
 API mapping and the current compatibility boundary.

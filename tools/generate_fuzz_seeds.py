@@ -24,6 +24,8 @@ SEEDS = {
         "seed-sym20-smooth-even.bin": bytes([56, 5]) + samples(list(range(-16, 16))),
         "seed-coif17-antireflect-odd.bin": bytes([73, 7])
         + samples(list(range(-16, 17))),
+        "seed-rbio6.8-antireflect-odd.bin": bytes([103, 7])
+        + samples(list(range(-24, 25))),
     },
     "wavedec_roundtrip": {
         "seed-empty.bin": b"",
@@ -32,6 +34,9 @@ SEEDS = {
         "seed-invalid-level.bin": bytes([37, 2, 1]) + samples([1, 2, 3, 4]),
         "seed-sym20-max.bin": bytes([56, 8, 0x80]) + samples(list(range(-32, 32))),
         "seed-coif17-max.bin": bytes([73, 2, 0x80]) + samples(list(range(-48, 48))),
+        "seed-bior6.8-max.bin": bytes([88, 2, 0x80]) + samples(list(range(-48, 48))),
+        "seed-rbio3.1-smooth-max-f32.bin": bytes([96, 0x80 | 5, 0x80])
+        + samples(list(range(-48, 48))),
     },
     "custom_filter_bank": {
         "seed-valid.bin": bytes([0, 2, 16])

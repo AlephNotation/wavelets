@@ -144,20 +144,45 @@ impl Wavelet {
 
     /// Constructs a biorthogonal wavelet identified by reconstruction and
     /// decomposition orders.
+    ///
+    /// The available pairs are `1.1`, `1.3`, `1.5`, `2.2`, `2.4`, `2.6`,
+    /// `2.8`, `3.1`, `3.3`, `3.5`, `3.7`, `3.9`, `4.4`, `5.5`, and `6.8`.
     pub fn biorthogonal(nr: usize, nd: usize) -> Result<Self, WaveletError> {
-        Err(WaveletError::UnsupportedWavelet {
-            family: "biorthogonal",
-            order: format!("{nr}.{nd}"),
-        })
+        let Some((dec_lo, rec_lo)) = coefficients::biorthogonal(nr, nd) else {
+            return Err(WaveletError::UnsupportedWavelet {
+                family: "biorthogonal",
+                order: format!("{nr}.{nd}"),
+            });
+        };
+        Ok(Self::biorthogonal_from_low_passes(
+            &format!("bior{nr}.{nd}"),
+            WaveletFamily::Biorthogonal,
+            nr,
+            dec_lo,
+            rec_lo,
+        ))
     }
 
     /// Constructs a reverse-biorthogonal wavelet identified by reconstruction
     /// and decomposition orders.
+    ///
+    /// The available pairs are the same as for [`Wavelet::biorthogonal`].
     pub fn reverse_biorthogonal(nr: usize, nd: usize) -> Result<Self, WaveletError> {
-        Err(WaveletError::UnsupportedWavelet {
-            family: "reverse biorthogonal",
-            order: format!("{nr}.{nd}"),
-        })
+        let Some((bior_dec_lo, bior_rec_lo)) = coefficients::biorthogonal(nr, nd) else {
+            return Err(WaveletError::UnsupportedWavelet {
+                family: "reverse biorthogonal",
+                order: format!("{nr}.{nd}"),
+            });
+        };
+        let dec_lo: Vec<_> = bior_rec_lo.iter().rev().copied().collect();
+        let rec_lo: Vec<_> = bior_dec_lo.iter().rev().copied().collect();
+        Ok(Self::biorthogonal_from_low_passes(
+            &format!("rbio{nr}.{nd}"),
+            WaveletFamily::ReverseBiorthogonal,
+            nr,
+            &dec_lo,
+            &rec_lo,
+        ))
     }
 
     /// Constructs a custom filter bank.
@@ -246,6 +271,49 @@ impl Wavelet {
             &rec_hi,
             Some(vanishing_moments),
             true,
+            true,
+        )
+    }
+
+    fn biorthogonal_from_low_passes(
+        name: &str,
+        family: WaveletFamily,
+        vanishing_moments: usize,
+        dec_lo: &[f64],
+        rec_lo: &[f64],
+    ) -> Self {
+        debug_assert_eq!(dec_lo.len(), rec_lo.len());
+        let dec_hi: Vec<_> = rec_lo
+            .iter()
+            .enumerate()
+            .map(|(index, coefficient)| {
+                if index % 2 == 0 {
+                    -coefficient
+                } else {
+                    *coefficient
+                }
+            })
+            .collect();
+        let rec_hi: Vec<_> = dec_lo
+            .iter()
+            .enumerate()
+            .map(|(index, coefficient)| {
+                if index % 2 == 0 {
+                    *coefficient
+                } else {
+                    -coefficient
+                }
+            })
+            .collect();
+        Self::new(
+            name,
+            family,
+            dec_lo,
+            &dec_hi,
+            rec_lo,
+            &rec_hi,
+            Some(vanishing_moments),
+            false,
             true,
         )
     }
@@ -392,6 +460,8 @@ mod tests {
         assert_eq!("db4".parse::<Wavelet>().unwrap().name(), "db4");
         assert_eq!(Wavelet::from_name("sym4").unwrap().name(), "sym4");
         assert_eq!(Wavelet::from_name("coif4").unwrap().name(), "coif4");
+        assert_eq!(Wavelet::from_name("bior4.4").unwrap().name(), "bior4.4");
+        assert_eq!(Wavelet::from_name("rbio4.4").unwrap().name(), "rbio4.4");
         assert_eq!(
             Wavelet::from_name("db04").unwrap_err(),
             WaveletError::UnknownWavelet {
@@ -438,6 +508,72 @@ mod tests {
         }
         assert!(Wavelet::coiflet(0).is_err());
         assert!(Wavelet::coiflet(18).is_err());
+    }
+
+    #[test]
+    fn all_biorthogonal_pairs_and_their_reverses_are_available() {
+        const PAIRS: [(usize, usize, usize); 15] = [
+            (1, 1, 2),
+            (1, 3, 6),
+            (1, 5, 10),
+            (2, 2, 6),
+            (2, 4, 10),
+            (2, 6, 14),
+            (2, 8, 18),
+            (3, 1, 4),
+            (3, 3, 8),
+            (3, 5, 12),
+            (3, 7, 16),
+            (3, 9, 20),
+            (4, 4, 10),
+            (5, 5, 12),
+            (6, 8, 18),
+        ];
+
+        for (reconstruction, decomposition, filter_len) in PAIRS {
+            let bior = Wavelet::biorthogonal(reconstruction, decomposition).unwrap();
+            let rbio = Wavelet::reverse_biorthogonal(reconstruction, decomposition).unwrap();
+            assert_eq!(bior.name(), format!("bior{reconstruction}.{decomposition}"));
+            assert_eq!(rbio.name(), format!("rbio{reconstruction}.{decomposition}"));
+            assert_eq!(bior.family(), WaveletFamily::Biorthogonal);
+            assert_eq!(rbio.family(), WaveletFamily::ReverseBiorthogonal);
+            assert_eq!(bior.filter_len(), filter_len);
+            assert_eq!(rbio.filter_len(), filter_len);
+            assert_eq!(bior.vanishing_moments(), Some(reconstruction));
+            assert_eq!(rbio.vanishing_moments(), Some(reconstruction));
+            assert!(!bior.is_orthogonal());
+            assert!(!rbio.is_orthogonal());
+            assert!(bior.is_biorthogonal());
+            assert!(rbio.is_biorthogonal());
+            assert!(
+                rbio.dec_lo()
+                    .iter()
+                    .copied()
+                    .eq(bior.rec_lo().iter().rev().copied())
+            );
+            assert!(
+                rbio.dec_hi()
+                    .iter()
+                    .copied()
+                    .eq(bior.rec_hi().iter().rev().copied())
+            );
+            assert!(
+                rbio.rec_lo()
+                    .iter()
+                    .copied()
+                    .eq(bior.dec_lo().iter().rev().copied())
+            );
+            assert!(
+                rbio.rec_hi()
+                    .iter()
+                    .copied()
+                    .eq(bior.dec_hi().iter().rev().copied())
+            );
+        }
+
+        assert!(Wavelet::biorthogonal(0, 0).is_err());
+        assert!(Wavelet::biorthogonal(4, 6).is_err());
+        assert!(Wavelet::reverse_biorthogonal(7, 9).is_err());
     }
 
     #[test]

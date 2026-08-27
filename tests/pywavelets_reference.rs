@@ -186,7 +186,7 @@ fn generated_fixture_matrix_matches_pywavelets() {
     assert_eq!(fixtures.generator, "PyWavelets 1.8.0");
     assert_eq!(
         fixtures.coefficient_source,
-        "wavelets high-precision spectral factorization"
+        "wavelets high-precision constructions"
     );
     let signals: HashMap<_, _> = fixtures
         .signals
@@ -253,7 +253,7 @@ fn multilevel_fixture_matrix_matches_pywavelets() {
     assert_eq!(fixtures.generator, "PyWavelets 1.8.0");
     assert_eq!(
         fixtures.coefficient_source,
-        "wavelets high-precision spectral factorization"
+        "wavelets high-precision constructions"
     );
     let signals: HashMap<_, _> = fixtures
         .signals

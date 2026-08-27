@@ -40,6 +40,34 @@ SYMLET_ROOT_SELECTIONS = {
     20: "1010011010",
 }
 
+# Canonical Cohen-Daubechies-Feauveau pairs. The tuple values are the exact
+# zero multiplicities at z = -1 for the reconstruction and decomposition
+# low-pass filters, followed by a mask assigning auxiliary-root groups to the
+# reconstruction filter. A zero assigns the group to the decomposition filter.
+#
+# The spline pairs therefore use all-zero masks. The 4.4, 5.5, and 6.8 masks
+# define the standard compact symmetric factorizations. The nominal 5.5 pair
+# uses multiplicities 6 and 4: odd-length symmetric filters necessarily have
+# even multiplicity at z = -1.
+BIORTHOGONAL_SPECS = {
+    (1, 1): (1, 1, ""),
+    (1, 3): (1, 3, "0"),
+    (1, 5): (1, 5, "0"),
+    (2, 2): (2, 2, "0"),
+    (2, 4): (2, 4, "0"),
+    (2, 6): (2, 6, "00"),
+    (2, 8): (2, 8, "00"),
+    (3, 1): (3, 1, "0"),
+    (3, 3): (3, 3, "0"),
+    (3, 5): (3, 5, "00"),
+    (3, 7): (3, 7, "00"),
+    (3, 9): (3, 9, "000"),
+    (4, 4): (4, 4, "10"),
+    (5, 5): (6, 4, "10"),
+    (6, 8): (6, 8, "010"),
+}
+BIORTHOGONAL_ORDERS = tuple(BIORTHOGONAL_SPECS)
+
 
 def rust_bits(value: mp.mpf) -> str:
     bits = struct.unpack("!Q", struct.pack("!d", float(value)))[0]
@@ -373,11 +401,184 @@ def coiflet(order: int) -> list[mp.mpf]:
         return coefficients
 
 
+def auxiliary_factor(
+    order: int, selections: str, selected: bool, label: str
+) -> list[mp.mpf]:
+    """Factor the Daubechies auxiliary polynomial by root-group selection."""
+    groups = root_groups(auxiliary_roots(order))
+    if len(selections) != len(groups) or set(selections) - {"0", "1"}:
+        raise ValueError(
+            f"{label} needs {len(groups)} binary root selections, got {selections!r}"
+        )
+
+    coefficients = [mp.mpc(1)]
+    for selection, (root, conjugate_pair) in zip(selections, groups, strict=True):
+        if (selection == "1") != selected:
+            continue
+        coefficients = convolve(coefficients, [-root, mp.mpc(1)])
+        if conjugate_pair:
+            coefficients = convolve(coefficients, [-mp.conj(root), mp.mpc(1)])
+
+    maximum_imaginary = max(abs(mp.im(value)) for value in coefficients)
+    if maximum_imaginary > mp.mpf("1e-70"):
+        raise ArithmeticError(
+            f"{label} auxiliary factor retained imaginary residue {maximum_imaginary}"
+        )
+    real_coefficients = [mp.re(value) for value in coefficients]
+    scale = 1 / real_coefficients[0]
+    return [value * scale for value in real_coefficients]
+
+
+def cdf_low_pass(zero_order: int, factor: list[mp.mpf]) -> list[mp.mpf]:
+    """Expand cos(x/2)^N * factor(sin(x/2)^2) as FIR coefficients."""
+    half = mp.mpf(1) / 2
+    quarter = mp.mpf(1) / 4
+    cosine = {0: half, 1: half}
+    sine_squared = {-1: -quarter, 0: 2 * quarter, 1: -quarter}
+
+    cosine_power = {0: mp.mpf(1)}
+    for _ in range(zero_order):
+        cosine_power = multiply_polynomials(cosine_power, cosine)
+
+    factor_response: dict[int, mp.mpf] = {}
+    sine_power = {0: mp.mpf(1)}
+    for coefficient in factor:
+        factor_response = add_polynomials(
+            factor_response,
+            {exponent: coefficient * value for exponent, value in sine_power.items()},
+        )
+        sine_power = multiply_polynomials(sine_power, sine_squared)
+
+    response = multiply_polynomials(cosine_power, factor_response)
+    return [
+        mp.sqrt(2) * response[exponent]
+        for exponent in range(min(response), max(response) + 1)
+    ]
+
+
+def pad_filter(values: list[mp.mpf], length: int, left: int) -> list[mp.mpf]:
+    right = length - left - len(values)
+    if left < 0 or right < 0:
+        raise ValueError("filter padding cannot be negative")
+    return [mp.mpf(0)] * left + values + [mp.mpf(0)] * right
+
+
+def biorthogonal_low_passes(
+    reconstruction_order: int, decomposition_order: int
+) -> tuple[list[mp.mpf], list[mp.mpf]]:
+    """Return canonical (decomposition, reconstruction) CDF low-pass filters."""
+    try:
+        reconstruction_zeros, decomposition_zeros, selections = BIORTHOGONAL_SPECS[
+            (reconstruction_order, decomposition_order)
+        ]
+    except KeyError as error:
+        raise ValueError(
+            "unsupported biorthogonal pair "
+            f"{reconstruction_order}.{decomposition_order}"
+        ) from error
+
+    # Equations (6.10) and (6.13) of Cohen, Daubechies, and Feauveau,
+    # "Biorthogonal Bases of Compactly Supported Wavelets" (1992), DOI
+    # 10.1002/cpa.3160450502. Factoring the unique lowest-degree half-band
+    # polynomial distributes its roots between the two symmetric low passes.
+    half_order = (reconstruction_zeros + decomposition_zeros) // 2
+    with mp.workdps(180):
+        reconstruction_factor = auxiliary_factor(
+            half_order,
+            selections,
+            True,
+            f"bior{reconstruction_order}.{decomposition_order}",
+        )
+        decomposition_factor = auxiliary_factor(
+            half_order,
+            selections,
+            False,
+            f"bior{reconstruction_order}.{decomposition_order}",
+        )
+        expected_product = [
+            mp.mpf(math.comb(half_order - 1 + index, index))
+            for index in range(half_order)
+        ]
+        actual_product = [
+            mp.re(value)
+            for value in convolve(
+                [mp.mpc(value) for value in reconstruction_factor],
+                [mp.mpc(value) for value in decomposition_factor],
+            )
+        ]
+        factor_error = max(
+            abs(actual - expected)
+            for actual, expected in zip(actual_product, expected_product, strict=True)
+        )
+
+        reconstruction = cdf_low_pass(reconstruction_zeros, reconstruction_factor)
+        decomposition = cdf_low_pass(decomposition_zeros, decomposition_factor)
+        common_length = max(len(decomposition), len(reconstruction))
+        common_length += common_length % 2
+        decomposition = pad_filter(
+            decomposition,
+            common_length,
+            (common_length - len(decomposition) + 1) // 2,
+        )
+        reconstruction = pad_filter(
+            reconstruction,
+            common_length,
+            (common_length - len(reconstruction)) // 2,
+        )
+
+        normalization_error = max(
+            abs(mp.fsum(values) - mp.sqrt(2))
+            for values in (decomposition, reconstruction)
+        )
+        moment_error = max(
+            max(
+                abs(
+                    mp.fsum(
+                        (-1) ** index * mp.power(index, degree) * coefficient
+                        for index, coefficient in enumerate(values)
+                    )
+                )
+                for degree in range(zero_order)
+            )
+            for values, zero_order in (
+                (decomposition, decomposition_zeros),
+                (reconstruction, reconstruction_zeros),
+            )
+        )
+        reversed_reconstruction = list(reversed(reconstruction))
+        biorthogonality_error = max(
+            abs(
+                mp.fsum(
+                    decomposition[index] * reversed_reconstruction[index - lag]
+                    for index in range(common_length)
+                    if 0 <= index - lag < common_length
+                )
+                - (1 if lag == 0 else 0)
+            )
+            for lag in range(-2 * common_length, 2 * common_length + 1, 2)
+        )
+        maximum_error = max(
+            factor_error,
+            normalization_error,
+            moment_error,
+            biorthogonality_error,
+        )
+        if maximum_error > mp.mpf("1e-100"):
+            raise ArithmeticError(
+                f"bior{reconstruction_order}.{decomposition_order} construction "
+                f"residual {maximum_error} is too large"
+            )
+        return decomposition, reconstruction
+
+
 def render() -> str:
     mp.mp.dps = 100
     daubechies_filters = {order: daubechies(order) for order in range(1, 39)}
     symlet_filters = {order: symlet(order) for order in range(2, 21)}
     coiflet_filters = {order: coiflet(order) for order in range(1, 18)}
+    biorthogonal_filters = {
+        orders: biorthogonal_low_passes(*orders) for orders in BIORTHOGONAL_ORDERS
+    }
 
     lines = [
         "// @generated by tools/generate_builtin_coefficients.py; do not edit by hand.",
@@ -391,6 +592,15 @@ def render() -> str:
         lines.append("")
     for order, coefficients in coiflet_filters.items():
         lines.extend(render_array(f"COIF{order}_DEC_LO", coefficients))
+        lines.append("")
+    for (reconstruction, decomposition), (
+        dec_lo,
+        rec_lo,
+    ) in biorthogonal_filters.items():
+        prefix = f"BIOR{reconstruction}_{decomposition}"
+        lines.extend(render_array(f"{prefix}_DEC_LO", dec_lo))
+        lines.append("")
+        lines.extend(render_array(f"{prefix}_REC_LO", rec_lo))
         lines.append("")
     lines.extend(
         [
@@ -419,6 +629,21 @@ def render() -> str:
             *(
                 f"        {order} => Some(&COIF{order}_DEC_LO),"
                 for order in coiflet_filters
+            ),
+            "        _ => None,",
+            "    }",
+            "}",
+            "",
+            "pub(crate) fn biorthogonal(",
+            "    reconstruction: usize,",
+            "    decomposition: usize,",
+            ") -> Option<(&'static [f64], &'static [f64])> {",
+            "    match (reconstruction, decomposition) {",
+            *(
+                f"        ({reconstruction}, {decomposition}) => "
+                f"Some((&BIOR{reconstruction}_{decomposition}_DEC_LO, "
+                f"&BIOR{reconstruction}_{decomposition}_REC_LO)),"
+                for reconstruction, decomposition in biorthogonal_filters
             ),
             "        _ => None,",
             "    }",

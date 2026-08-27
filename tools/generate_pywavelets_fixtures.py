@@ -10,7 +10,13 @@ from pathlib import Path
 
 import mpmath as mp
 import pywt
-from generate_builtin_coefficients import coiflet, daubechies, symlet
+from generate_builtin_coefficients import (
+    BIORTHOGONAL_ORDERS,
+    biorthogonal_low_passes,
+    coiflet,
+    daubechies,
+    symlet,
+)
 
 SINGLE_LEVEL_LENGTHS = [*range(1, 17), 17, 31, 100, 101]
 MULTILEVEL_LENGTHS = [31, 100, 101, 1000]
@@ -19,6 +25,14 @@ WAVELET_NAMES = [
     *(f"db{order}" for order in range(1, 39)),
     *(f"sym{order}" for order in range(2, 21)),
     *(f"coif{order}" for order in range(1, 18)),
+    *(
+        f"bior{reconstruction}.{decomposition}"
+        for reconstruction, decomposition in BIORTHOGONAL_ORDERS
+    ),
+    *(
+        f"rbio{reconstruction}.{decomposition}"
+        for reconstruction, decomposition in BIORTHOGONAL_ORDERS
+    ),
 ]
 
 
@@ -26,7 +40,50 @@ def signal(length: int) -> list[float]:
     return [math.sin(index * 0.37) + (index % 7) - 3.0 for index in range(length)]
 
 
-def authored_dec_lo(name: str) -> list[float]:
+def orthogonal_filter_bank(dec_lo: list[float]) -> list[list[float]]:
+    dec_hi = [
+        -coefficient if index % 2 == 0 else coefficient
+        for index, coefficient in enumerate(reversed(dec_lo))
+    ]
+    rec_lo = list(reversed(dec_lo))
+    rec_hi = list(reversed(dec_hi))
+    return [dec_lo, dec_hi, rec_lo, rec_hi]
+
+
+def biorthogonal_filter_bank(
+    reconstruction: int, decomposition: int
+) -> list[list[float]]:
+    authored_dec_lo, authored_rec_lo = biorthogonal_low_passes(
+        reconstruction, decomposition
+    )
+    dec_lo = [float(value) for value in authored_dec_lo]
+    rec_lo = [float(value) for value in authored_rec_lo]
+    dec_hi = [
+        -coefficient if index % 2 == 0 else coefficient
+        for index, coefficient in enumerate(rec_lo)
+    ]
+    rec_hi = [
+        coefficient if index % 2 == 0 else -coefficient
+        for index, coefficient in enumerate(dec_lo)
+    ]
+    return [dec_lo, dec_hi, rec_lo, rec_hi]
+
+
+def authored_filter_bank(name: str) -> list[list[float]]:
+    if name.startswith(("bior", "rbio")):
+        prefix = "rbio" if name.startswith("rbio") else "bior"
+        reconstruction, decomposition = map(int, name.removeprefix(prefix).split("."))
+        filters = biorthogonal_filter_bank(reconstruction, decomposition)
+        if prefix == "rbio":
+            dec_lo, dec_hi, rec_lo, rec_hi = filters
+            return [
+                list(reversed(rec_lo)),
+                list(reversed(rec_hi)),
+                list(reversed(dec_lo)),
+                list(reversed(dec_hi)),
+            ]
+        return filters
+
     if name == "haar":
         coefficients = daubechies(1)
     elif name.startswith("db"):
@@ -37,24 +94,30 @@ def authored_dec_lo(name: str) -> list[float]:
         coefficients = coiflet(int(name.removeprefix("coif")))
     else:
         raise ValueError(f"unsupported fixture wavelet {name}")
-    return [float(value) for value in coefficients]
+    return orthogonal_filter_bank([float(value) for value in coefficients])
 
 
 def authored_wavelet(name: str) -> pywt.Wavelet:
-    dec_lo = authored_dec_lo(name)
+    filter_bank = authored_filter_bank(name)
 
     # PyWavelets' catalog establishes the canonical family and orientation,
     # while the transforms below use our independently authored binary64
-    # coefficients. Its older Symlet tables agree to at least ten decimals.
-    canonical = pywt.Wavelet(name).dec_lo
-    if len(dec_lo) != len(canonical):
+    # coefficients. Its older Symlet and CDF tables agree to at least ten
+    # decimals.
+    canonical = pywt.Wavelet(name).filter_bank
+    if any(
+        len(authored) != len(reference)
+        for authored, reference in zip(filter_bank, canonical, strict=True)
+    ):
         raise ArithmeticError(
-            f"{name} filter length {len(dec_lo)} does not match "
-            f"PyWavelets length {len(canonical)}"
+            f"{name} filter lengths do not match the canonical PyWavelets bank"
         )
     maximum_error = max(
         abs(authored - reference)
-        for authored, reference in zip(dec_lo, canonical, strict=True)
+        for authored_filter, reference_filter in zip(
+            filter_bank, canonical, strict=True
+        )
+        for authored, reference in zip(authored_filter, reference_filter, strict=True)
     )
     if maximum_error > 2.0e-11:
         raise ArithmeticError(
@@ -62,16 +125,7 @@ def authored_wavelet(name: str) -> pywt.Wavelet:
             f"maximum coefficient error {maximum_error:.3e}"
         )
 
-    dec_hi = [
-        -coefficient if index % 2 == 0 else coefficient
-        for index, coefficient in enumerate(reversed(dec_lo))
-    ]
-    rec_lo = list(reversed(dec_lo))
-    rec_hi = list(reversed(dec_hi))
-    return pywt.Wavelet(
-        f"wavelets-{name}",
-        filter_bank=[dec_lo, dec_hi, rec_lo, rec_hi],
-    )
+    return pywt.Wavelet(f"wavelets-{name}", filter_bank=filter_bank)
 
 
 def generate() -> dict[str, object]:
@@ -118,7 +172,7 @@ def generate() -> dict[str, object]:
                 )
     return {
         "generator": f"PyWavelets {pywt.__version__}",
-        "coefficient_source": "wavelets high-precision spectral factorization",
+        "coefficient_source": "wavelets high-precision constructions",
         "signals": signals,
         "cases": cases,
         "multilevel_cases": multilevel_cases,

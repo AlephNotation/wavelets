@@ -3040,6 +3040,428 @@ pub(crate) const COIF17_DEC_LO: [f64; 102] = [
     f64::from_bits(0xbda4_3739_651e_1d63),
 ];
 
+pub(crate) const BIOR1_1_DEC_LO: [f64; 2] = [
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR1_1_REC_LO: [f64; 2] = [
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR1_3_DEC_LO: [f64; 6] = [
+    f64::from_bits(0xbfb6_a09e_667f_3bcd),
+    f64::from_bits(0x3fb6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fb6_a09e_667f_3bcd),
+    f64::from_bits(0xbfb6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR1_3_REC_LO: [f64; 6] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR1_5_DEC_LO: [f64; 10] = [
+    f64::from_bits(0x3f90_f876_ccdf_6cd9),
+    f64::from_bits(0xbf90_f876_ccdf_6cd9),
+    f64::from_bits(0xbfbf_1cd9_ccee_f239),
+    f64::from_bits(0x3fbf_1cd9_ccee_f239),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fbf_1cd9_ccee_f239),
+    f64::from_bits(0xbfbf_1cd9_ccee_f239),
+    f64::from_bits(0xbf90_f876_ccdf_6cd9),
+    f64::from_bits(0x3f90_f876_ccdf_6cd9),
+];
+
+pub(crate) const BIOR1_5_REC_LO: [f64; 10] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR2_2_DEC_LO: [f64; 6] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0xbfc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x3ff0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0xbfc6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR2_2_REC_LO: [f64; 6] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR2_4_DEC_LO: [f64; 10] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fa0_f876_ccdf_6cd9),
+    f64::from_bits(0xbfb0_f876_ccdf_6cd9),
+    f64::from_bits(0xbfc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fda_debc_19b7_1703),
+    f64::from_bits(0x3fef_d1de_c022_ec18),
+    f64::from_bits(0x3fda_debc_19b7_1703),
+    f64::from_bits(0xbfc6_a09e_667f_3bcd),
+    f64::from_bits(0xbfb0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fa0_f876_ccdf_6cd9),
+];
+
+pub(crate) const BIOR2_4_REC_LO: [f64; 10] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR2_6_DEC_LO: [f64; 14] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0xbf7c_48c6_001f_0ac0),
+    f64::from_bits(0x3f8c_48c6_001f_0ac0),
+    f64::from_bits(0x3fa8_0aa8_4ce7_2f89),
+    f64::from_bits(0xbfbb_93c1_0ceb_10e1),
+    f64::from_bits(0xbfc5_be58_367e_4377),
+    f64::from_bits(0x3fdc_a348_79b9_07af),
+    f64::from_bits(0x3fee_ef98_9021_f3c2),
+    f64::from_bits(0x3fdc_a348_79b9_07af),
+    f64::from_bits(0xbfc5_be58_367e_4377),
+    f64::from_bits(0xbfbb_93c1_0ceb_10e1),
+    f64::from_bits(0x3fa8_0aa8_4ce7_2f89),
+    f64::from_bits(0x3f8c_48c6_001f_0ac0),
+    f64::from_bits(0xbf7c_48c6_001f_0ac0),
+];
+
+pub(crate) const BIOR2_6_REC_LO: [f64; 14] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR2_8_DEC_LO: [f64; 18] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3f58_bfad_401b_2968),
+    f64::from_bits(0xbf68_bfad_401b_2968),
+    f64::from_bits(0xbf8a_8439_a01d_1a14),
+    f64::from_bits(0x3f9d_9c2f_4820_7f41),
+    f64::from_bits(0x3fab_229d_f4ea_94b6),
+    f64::from_bits(0xbfc1_44d4_e379_5a43),
+    f64::from_bits(0xbfc4_f85a_cc7d_6a2b),
+    f64::from_bits(0x3fdd_9ac5_3e3a_174d),
+    f64::from_bits(0x3fee_73da_2de1_6bf3),
+    f64::from_bits(0x3fdd_9ac5_3e3a_174d),
+    f64::from_bits(0xbfc4_f85a_cc7d_6a2b),
+    f64::from_bits(0xbfc1_44d4_e379_5a43),
+    f64::from_bits(0x3fab_229d_f4ea_94b6),
+    f64::from_bits(0x3f9d_9c2f_4820_7f41),
+    f64::from_bits(0xbf8a_8439_a01d_1a14),
+    f64::from_bits(0xbf68_bfad_401b_2968),
+    f64::from_bits(0x3f58_bfad_401b_2968),
+];
+
+pub(crate) const BIOR2_8_REC_LO: [f64; 18] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe6_a09e_667f_3bcd),
+    f64::from_bits(0x3fd6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR3_1_DEC_LO: [f64; 4] = [
+    f64::from_bits(0xbfd6_a09e_667f_3bcd),
+    f64::from_bits(0x3ff0_f876_ccdf_6cd9),
+    f64::from_bits(0x3ff0_f876_ccdf_6cd9),
+    f64::from_bits(0xbfd6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR3_1_REC_LO: [f64; 4] = [
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+];
+
+pub(crate) const BIOR3_3_DEC_LO: [f64; 8] = [
+    f64::from_bits(0x3fb0_f876_ccdf_6cd9),
+    f64::from_bits(0xbfc9_74b2_334f_2346),
+    f64::from_bits(0xbfc3_cc8a_99af_5453),
+    f64::from_bits(0x3fef_d1de_c022_ec18),
+    f64::from_bits(0x3fef_d1de_c022_ec18),
+    f64::from_bits(0xbfc3_cc8a_99af_5453),
+    f64::from_bits(0xbfc9_74b2_334f_2346),
+    f64::from_bits(0x3fb0_f876_ccdf_6cd9),
+];
+
+pub(crate) const BIOR3_3_REC_LO: [f64; 8] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR3_5_DEC_LO: [f64; 12] = [
+    f64::from_bits(0xbf8c_48c6_001f_0ac0),
+    f64::from_bits(0x3fa5_3694_8017_4810),
+    f64::from_bits(0x3faa_debc_19b7_1703),
+    f64::from_bits(0xbfd1_25b8_09ac_6b51),
+    f64::from_bits(0xbfb2_6280_b347_6096),
+    f64::from_bits(0x3fee_ef98_9021_f3c2),
+    f64::from_bits(0x3fee_ef98_9021_f3c2),
+    f64::from_bits(0xbfb2_6280_b347_6096),
+    f64::from_bits(0xbfd1_25b8_09ac_6b51),
+    f64::from_bits(0x3faa_debc_19b7_1703),
+    f64::from_bits(0x3fa5_3694_8017_4810),
+    f64::from_bits(0xbf8c_48c6_001f_0ac0),
+];
+
+pub(crate) const BIOR3_5_REC_LO: [f64; 12] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR3_7_DEC_LO: [f64; 16] = [
+    f64::from_bits(0x3f68_bfad_401b_2968),
+    f64::from_bits(0xbf82_8fc1_f014_5f0e),
+    f64::from_bits(0xbf91_3c58_a812_ea8d),
+    f64::from_bits(0x3fb3_1d2d_ce14_fa44),
+    f64::from_bits(0x3fa0_0ae0_4dab_34e6),
+    f64::from_bits(0xbfd3_4630_ed2e_c0e0),
+    f64::from_bits(0xbf9b_229d_f4ea_94b6),
+    f64::from_bits(0x3fee_73da_2de1_6bf3),
+    f64::from_bits(0x3fee_73da_2de1_6bf3),
+    f64::from_bits(0xbf9b_229d_f4ea_94b6),
+    f64::from_bits(0xbfd3_4630_ed2e_c0e0),
+    f64::from_bits(0x3fa0_0ae0_4dab_34e6),
+    f64::from_bits(0x3fb3_1d2d_ce14_fa44),
+    f64::from_bits(0xbf91_3c58_a812_ea8d),
+    f64::from_bits(0xbf82_8fc1_f014_5f0e),
+    f64::from_bits(0x3f68_bfad_401b_2968),
+];
+
+pub(crate) const BIOR3_7_REC_LO: [f64; 16] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR3_9_DEC_LO: [f64; 20] = [
+    f64::from_bits(0xbf46_461b_ece5_3edd),
+    f64::from_bits(0x3f60_b494_f1ab_ef26),
+    f64::from_bits(0x3f74_ba21_18e3_8c47),
+    f64::from_bits(0xbf95_1d1f_cde3_f8ed),
+    f64::from_bits(0xbf8c_e72a_54ec_8562),
+    f64::from_bits(0x3fb9_60e5_a8b5_73f2),
+    f64::from_bits(0x3f89_30d0_581b_a593),
+    f64::from_bits(0xbfd4_7e06_7423_4a50),
+    f64::from_bits(0x3f60_cb35_9012_6e62),
+    f64::from_bits(0x3fee_25e4_cc24_4997),
+    f64::from_bits(0x3fee_25e4_cc24_4997),
+    f64::from_bits(0x3f60_cb35_9012_6e62),
+    f64::from_bits(0xbfd4_7e06_7423_4a50),
+    f64::from_bits(0x3f89_30d0_581b_a593),
+    f64::from_bits(0x3fb9_60e5_a8b5_73f2),
+    f64::from_bits(0xbf8c_e72a_54ec_8562),
+    f64::from_bits(0xbf95_1d1f_cde3_f8ed),
+    f64::from_bits(0x3f74_ba21_18e3_8c47),
+    f64::from_bits(0x3f60_b494_f1ab_ef26),
+    f64::from_bits(0xbf46_461b_ece5_3edd),
+];
+
+pub(crate) const BIOR3_9_REC_LO: [f64; 20] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fe0_f876_ccdf_6cd9),
+    f64::from_bits(0x3fc6_a09e_667f_3bcd),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR4_4_DEC_LO: [f64; 10] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fa3_5e40_5685_7f45),
+    f64::from_bits(0xbf98_6bfe_8124_2e5d),
+    f64::from_bits(0xbfbc_51e1_871d_d9eb),
+    f64::from_bits(0x3fd8_275e_4e91_7eb2),
+    f64::from_bits(0x3feb_494e_bd76_025f),
+    f64::from_bits(0x3fd8_275e_4e91_7eb2),
+    f64::from_bits(0xbfbc_51e1_871d_d9eb),
+    f64::from_bits(0xbf98_6bfe_8124_2e5d),
+    f64::from_bits(0x3fa3_5e40_5685_7f45),
+];
+
+pub(crate) const BIOR4_4_REC_LO: [f64; 10] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0xbfb0_859e_c636_3035),
+    f64::from_bits(0xbfa4_d53e_4bda_493c),
+    f64::from_bits(0x3fda_c206_180c_c7da),
+    f64::from_bits(0x3fe9_3b46_2ffa_84f4),
+    f64::from_bits(0x3fda_c206_180c_c7da),
+    f64::from_bits(0xbfa4_d53e_4bda_493c),
+    f64::from_bits(0xbfb0_859e_c636_3035),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR5_5_DEC_LO: [f64; 12] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3fa4_51dd_b50e_18b5),
+    f64::from_bits(0x3f80_4719_154d_13ca),
+    f64::from_bits(0xbfab_e2ad_7c93_6155),
+    f64::from_bits(0x3fd6_1e65_9dd4_d32e),
+    f64::from_bits(0x3fe7_92b8_5f6f_e4e1),
+    f64::from_bits(0x3fd6_1e65_9dd4_d32e),
+    f64::from_bits(0xbfab_e2ad_7c93_6155),
+    f64::from_bits(0x3f80_4719_154d_13ca),
+    f64::from_bits(0x3fa4_51dd_b50e_18b5),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR5_5_REC_LO: [f64; 12] = [
+    f64::from_bits(0x3f8b_8f30_f851_e165),
+    f64::from_bits(0xbf66_13c1_53b6_5ea2),
+    f64::from_bits(0xbfc1_7f99_f323_c966),
+    f64::from_bits(0xbfb7_efec_815b_b4eb),
+    f64::from_bits(0x3fde_83f1_d84e_9174),
+    f64::from_bits(0x3fec_c8c1_097d_95c5),
+    f64::from_bits(0x3fde_83f1_d84e_9174),
+    f64::from_bits(0xbfb7_efec_815b_b4eb),
+    f64::from_bits(0xbfc1_7f99_f323_c966),
+    f64::from_bits(0xbf66_13c1_53b6_5ea2),
+    f64::from_bits(0x3f8b_8f30_f851_e165),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
+pub(crate) const BIOR6_8_DEC_LO: [f64; 18] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3f5f_4638_786e_ebc3),
+    f64::from_bits(0xbf5f_5d19_1474_24c1),
+    f64::from_bits(0xbf91_65fe_8a47_2768),
+    f64::from_bits(0x3f88_7126_3c8c_1715),
+    f64::from_bits(0x3fa9_7697_540e_b1f5),
+    f64::from_bits(0xbfb3_c784_f1f0_3832),
+    f64::from_bits(0xbfb8_1443_92e6_f05c),
+    f64::from_bits(0x3fda_ee53_8a2b_5d45),
+    f64::from_bits(0x3fea_6df6_10e3_2530),
+    f64::from_bits(0x3fda_ee53_8a2b_5d45),
+    f64::from_bits(0xbfb8_1443_92e6_f05c),
+    f64::from_bits(0xbfb3_c784_f1f0_3832),
+    f64::from_bits(0x3fa9_7697_540e_b1f5),
+    f64::from_bits(0x3f88_7126_3c8c_1715),
+    f64::from_bits(0xbf91_65fe_8a47_2768),
+    f64::from_bits(0xbf5f_5d19_1474_24c1),
+    f64::from_bits(0x3f5f_4638_786e_ebc3),
+];
+
+pub(crate) const BIOR6_8_REC_LO: [f64; 18] = [
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x3f8d_8b86_dc84_1aee),
+    f64::from_bits(0x3f8d_a123_a317_4654),
+    f64::from_bits(0xbfb4_2720_040a_32ea),
+    f64::from_bits(0xbfa4_ab1c_9b7b_71fe),
+    f64::from_bits(0x3fda_be0a_309d_a7b0),
+    f64::from_bits(0x3fe8_48f8_dcd5_efda),
+    f64::from_bits(0x3fda_be0a_309d_a7b0),
+    f64::from_bits(0xbfa4_ab1c_9b7b_71fe),
+    f64::from_bits(0xbfb4_2720_040a_32ea),
+    f64::from_bits(0x3f8d_a123_a317_4654),
+    f64::from_bits(0x3f8d_8b86_dc84_1aee),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+    f64::from_bits(0x0000_0000_0000_0000),
+];
+
 pub(crate) fn daubechies(order: usize) -> Option<&'static [f64]> {
     match order {
         1 => Some(&DB1_DEC_LO),
@@ -3128,6 +3550,30 @@ pub(crate) fn coiflet(order: usize) -> Option<&'static [f64]> {
         15 => Some(&COIF15_DEC_LO),
         16 => Some(&COIF16_DEC_LO),
         17 => Some(&COIF17_DEC_LO),
+        _ => None,
+    }
+}
+
+pub(crate) fn biorthogonal(
+    reconstruction: usize,
+    decomposition: usize,
+) -> Option<(&'static [f64], &'static [f64])> {
+    match (reconstruction, decomposition) {
+        (1, 1) => Some((&BIOR1_1_DEC_LO, &BIOR1_1_REC_LO)),
+        (1, 3) => Some((&BIOR1_3_DEC_LO, &BIOR1_3_REC_LO)),
+        (1, 5) => Some((&BIOR1_5_DEC_LO, &BIOR1_5_REC_LO)),
+        (2, 2) => Some((&BIOR2_2_DEC_LO, &BIOR2_2_REC_LO)),
+        (2, 4) => Some((&BIOR2_4_DEC_LO, &BIOR2_4_REC_LO)),
+        (2, 6) => Some((&BIOR2_6_DEC_LO, &BIOR2_6_REC_LO)),
+        (2, 8) => Some((&BIOR2_8_DEC_LO, &BIOR2_8_REC_LO)),
+        (3, 1) => Some((&BIOR3_1_DEC_LO, &BIOR3_1_REC_LO)),
+        (3, 3) => Some((&BIOR3_3_DEC_LO, &BIOR3_3_REC_LO)),
+        (3, 5) => Some((&BIOR3_5_DEC_LO, &BIOR3_5_REC_LO)),
+        (3, 7) => Some((&BIOR3_7_DEC_LO, &BIOR3_7_REC_LO)),
+        (3, 9) => Some((&BIOR3_9_DEC_LO, &BIOR3_9_REC_LO)),
+        (4, 4) => Some((&BIOR4_4_DEC_LO, &BIOR4_4_REC_LO)),
+        (5, 5) => Some((&BIOR5_5_DEC_LO, &BIOR5_5_REC_LO)),
+        (6, 8) => Some((&BIOR6_8_DEC_LO, &BIOR6_8_REC_LO)),
         _ => None,
     }
 }
