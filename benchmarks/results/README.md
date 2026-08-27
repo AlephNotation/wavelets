@@ -1,18 +1,54 @@
 # Published benchmark results
 
 These are end-to-end transform execution measurements, not isolated inner-loop
-claims. Planning, wavelet construction, and input generation happen before the
-timer. The Rust `allocating` path allocates its output on every call; the Rust
-`into` path reuses caller-owned output and scratch buffers. PyWavelets uses its
+claims. Input generation happens before every timer; each section below states
+its exact planning and output-materialization boundaries. PyWavelets uses its
 normal allocating Python API.
 
 ## Apple M4 Max / NEON
 
 Measured on macOS 15.6 with an Apple M4 Max using the runtime-selected NEON
-backend. The source was clean commit `497327670c6881cec64c4e04913974dbddd83a80`
-(`wavelets` 0.1.0-alpha.4), compiled with Rust 1.98's release profile and no
-additional `RUSTFLAGS`. The comparison used Python 3.14.6, NumPy 2.5.2,
-PyWavelets distribution 1.9.0 (whose module reports 1.8.0), and GSL 2.8.
+backend. Both reports use Rust 1.98's release profile with no additional
+`RUSTFLAGS`, Python 3.14.6, NumPy 2.5.2, and PyWavelets distribution 1.9.0
+(whose module reports 1.8.0).
+
+### Same-interpreter Python API
+
+This report was generated from clean commit
+`52a7ed1e4479ab75abf54a848f448dbf60b5ed4c`. Both implementations run in the
+same CPython interpreter and receive the same NumPy inputs. The `planned` path
+reuses a `wavelets-rs` plan. The deliberately conservative `cold` path creates
+the canonical wavelet and plan inside every call, while PyWavelets receives a
+preconstructed `pywt.Wavelet`. All paths create and destroy their outputs inside
+the timed batch.
+
+Signal length 4,096, db4, symmetric extension:
+
+| Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| f64 | single forward | 2.79 us | 4.40 us | 9.86 us | 3.54x | 2.24x |
+| f64 | single inverse | 2.60 us | 4.16 us | 6.32 us | 2.43x | 1.52x |
+| f64 | multilevel forward | 7.52 us | 11.13 us | 31.19 us | 4.15x | 2.80x |
+| f64 | multilevel inverse | 6.17 us | 9.67 us | 21.43 us | 3.48x | 2.22x |
+| f32 | single forward | 1.60 us | 3.09 us | 9.48 us | 5.91x | 3.07x |
+| f32 | single inverse | 1.42 us | 2.96 us | 6.23 us | 4.39x | 2.11x |
+| f32 | multilevel forward | 4.52 us | 7.74 us | 30.93 us | 6.84x | 4.00x |
+| f32 | multilevel inverse | 3.67 us | 6.90 us | 21.84 us | 5.94x | 3.16x |
+
+The planned binding wins all 70 canonical cases, ranging from 1.77x to 8.42x
+with a 3.54x median. The cold path wins 64 of 70, ranging from 0.86x to 4.73x
+with a 2.14x median. Its six losses are short f64 single-level transforms of at
+most 256 samples. Complete environment metadata, checksums, batch sizes, and
+all 4,200 raw timing samples are in
+[apple-m4-max-python-api.json](apple-m4-max-python-api.json).
+
+### Native Rust API
+
+The native report was generated from clean commit
+`497327670c6881cec64c4e04913974dbddd83a80` (`wavelets` 0.1.0-alpha.4) and also
+included GSL 2.8. Planning and wavelet construction are outside the timer. The
+Rust `allocating` path allocates output on every call, while the Rust `into`
+path reuses caller-owned output and scratch buffers.
 
 Each number below is the median of 20 calibrated in-process samples targeting
 10 ms apiece after three warmup batches. Checksums are validated between Rust's
@@ -20,7 +56,7 @@ two APIs and PyWavelets before a report is accepted. The complete 70-case matrix
 environment metadata, batch sizes, checksums, and all 216 sets of raw samples
 are in [apple-m4-max-neon.json](apple-m4-max-neon.json).
 
-### Representative PyWavelets comparison
+#### Representative PyWavelets comparison
 
 Signal length 4,096, db4, symmetric extension:
 
@@ -40,7 +76,7 @@ Across all 70 canonical cases, PyWavelets divided by Rust `into` ranged from
 fixed cost of crossing PyWavelets' Python API, so the representative table above
 is a better guide for sustained transform work.
 
-### Strictly comparable GSL subset
+#### Strictly comparable GSL subset
 
 GSL's public 1D API always computes a complete transform. The shared semantic
 subset is therefore full-depth `f64` Haar with periodic extension, corresponding
@@ -75,3 +111,13 @@ python3 benchmarks/compare/compare.py \
 
 Omit `--gsl` if GSL is unavailable. The benchmark runner records the source
 revision and dirty state automatically.
+
+Build the Python extension and reproduce the same-interpreter report with:
+
+```text
+python3 -m venv python/.venv
+python/.venv/bin/python -m pip install -r python/requirements-dev.txt
+(cd python && .venv/bin/maturin develop --release)
+python/.venv/bin/python benchmarks/compare/python_api.py \
+  --output benchmarks/reports/python-api.json
+```

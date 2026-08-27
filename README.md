@@ -94,9 +94,39 @@ compatible subset of GSL.
 
 Published Apple M4 Max/NEON results are available with every raw timing sample
 and the exact source revision in
-[benchmarks/results](benchmarks/results/README.md). These are median end-to-end
-execution times for a 4,096-sample db4 transform with symmetric extension;
-planning and input generation are outside the timer.
+[benchmarks/results](benchmarks/results/README.md).
+
+### Python-to-Python API
+
+This comparison imports `wavelets_rs` and PyWavelets into the same CPython
+interpreter and passes the same NumPy arrays to both. Output creation and
+destruction are timed. `planned` reuses the intended `wavelets-rs` plan;
+`cold` also charges canonical wavelet construction and planning to every call.
+PyWavelets receives a preconstructed `pywt.Wavelet`.
+
+Median end-to-end times for a 4,096-sample db4 transform with symmetric
+extension:
+
+| Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| f64 | single forward | 2.79 us | 4.40 us | 9.86 us | 3.54x | 2.24x |
+| f64 | single inverse | 2.60 us | 4.16 us | 6.32 us | 2.43x | 1.52x |
+| f64 | multilevel forward | 7.52 us | 11.13 us | 31.19 us | 4.15x | 2.80x |
+| f64 | multilevel inverse | 6.17 us | 9.67 us | 21.43 us | 3.48x | 2.22x |
+| f32 | single forward | 1.60 us | 3.09 us | 9.48 us | 5.91x | 3.07x |
+| f32 | single inverse | 1.42 us | 2.96 us | 6.23 us | 4.39x | 2.11x |
+| f32 | multilevel forward | 4.52 us | 7.74 us | 30.93 us | 6.84x | 4.00x |
+| f32 | multilevel inverse | 3.67 us | 6.90 us | 21.84 us | 5.94x | 3.16x |
+
+The planned binding wins all 70 canonical cases: 1.77x to 8.42x, with a 3.54x
+median. The cold path wins 64 of 70 and has a 2.14x median; its six losses are
+short f64 single-level transforms of at most 256 samples, where setup dominates.
+
+### Native Rust API
+
+These measurements use the lower-level native runner. Planning and input
+generation are outside the timer; Rust reports both allocating and reusable
+caller-buffer paths.
 
 | Precision | Transform | Rust allocating | Rust `into` | PyWavelets | PyWavelets / `into` |
 | --- | --- | ---: | ---: | ---: | ---: |

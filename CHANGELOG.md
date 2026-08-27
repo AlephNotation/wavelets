@@ -20,6 +20,8 @@ All notable changes to `wavelets` are documented here.
   `f32`/`f64` plans.
 - Added a same-interpreter Python benchmark that reports both reusable-plan and
   cold plan-plus-execute performance against PyWavelets with raw samples.
+- Published the Apple M4 Max Python-to-Python comparison with both planning
+  boundaries and all raw timing samples.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
