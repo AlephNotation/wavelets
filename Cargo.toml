@@ -1,13 +1,23 @@
 [package]
 name = "wavelets"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.98"
 description = "Plan-once, allocation-free discrete wavelet transforms"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/AlephNotation/wavelets"
+documentation = "https://docs.rs/wavelets"
 keywords = ["wavelet", "dwt", "signal-processing", "dsp"]
 categories = ["algorithms", "mathematics", "science"]
+include = [
+    "/src/**",
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE",
+    "/DESIGN.md",
+    "/MIGRATING_FROM_PYWAVELETS.md",
+]
 
 [features]
 count-allocations = ["dep:allocation-counter"]
