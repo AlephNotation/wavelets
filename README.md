@@ -21,10 +21,8 @@ slice includes:
 The remaining built-in families and published cross-library benchmark results
 remain before the first beta.
 
-The implementation invariants and deliberate departures from the initial
-sketch are recorded in [DESIGN.md](DESIGN.md). See
-[Migrating from PyWavelets](MIGRATING_FROM_PYWAVELETS.md) for the direct API
-mapping and the current compatibility boundary.
+See [Migrating from PyWavelets](MIGRATING_FROM_PYWAVELETS.md) for the direct
+API mapping and the current compatibility boundary.
 
 ## PyWavelets-style API
 

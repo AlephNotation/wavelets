@@ -15,7 +15,6 @@ include = [
     "/Cargo.toml",
     "/README.md",
     "/LICENSE",
-    "/DESIGN.md",
     "/MIGRATING_FROM_PYWAVELETS.md",
 ]
 
