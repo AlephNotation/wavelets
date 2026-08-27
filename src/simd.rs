@@ -19,6 +19,14 @@ pub struct AnalysisInterior<'a, T> {
     pub(crate) first_newest: usize,
 }
 
+#[derive(Clone, Copy)]
+struct AnalysisAccumulators<V> {
+    low_earlier: V,
+    low_later: V,
+    high_earlier: V,
+    high_later: V,
+}
+
 pub struct LinearSynthesis<'a, T> {
     pub(crate) rec_lo: &'a [T],
     pub(crate) rec_hi: &'a [T],
@@ -44,50 +52,109 @@ pub(crate) fn forward_interior<S: Simd, T: SimdSample<S>>(
     approx: &mut [T],
     detail: &mut [T],
 ) -> usize {
-    let AnalysisInterior {
-        dec_lo,
-        dec_hi,
-        signal,
-        first_newest,
-    } = interior;
+    // Peeling consumes the entire two-tap filter, leaving no FMA dependency
+    // chain for a wider batch to hide.
+    if interior.dec_lo.len() == 2 {
+        forward_interior_batches::<_, _, 1>(simd, &interior, approx, detail)
+    } else {
+        forward_interior_batches::<_, _, 2>(simd, &interior, approx, detail)
+    }
+}
+
+#[inline(always)]
+fn forward_interior_batches<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+    simd: S,
+    interior: &AnalysisInterior<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
     let lanes = T::Vector::N;
     let vectorized_outputs = approx.len() - approx.len() % lanes;
+    let batch_width = BATCHES * lanes;
+    let batched_outputs = vectorized_outputs - vectorized_outputs % batch_width;
 
-    for output in (0..vectorized_outputs).step_by(lanes) {
-        let newest = first_newest + 2 * output;
+    for output in (0..batched_outputs).step_by(batch_width) {
+        forward_interior_batch::<_, _, BATCHES>(simd, interior, approx, detail, output);
+    }
+    if batched_outputs < vectorized_outputs {
+        forward_interior_batch::<_, _, 1>(simd, interior, approx, detail, batched_outputs);
+    }
+
+    vectorized_outputs
+}
+
+#[inline(always)]
+fn forward_interior_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+    simd: S,
+    interior: &AnalysisInterior<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+    first_output: usize,
+) {
+    let dec_lo = interior.dec_lo;
+    let dec_hi = interior.dec_hi;
+    let signal = interior.signal;
+    let lanes = T::Vector::N;
+    let (low_pairs, low_remainder) = dec_lo.as_chunks::<2>();
+    let (high_pairs, high_remainder) = dec_hi.as_chunks::<2>();
+    debug_assert!(low_remainder.is_empty());
+    debug_assert!(high_remainder.is_empty());
+    let (first_low, low_pairs) = low_pairs
+        .split_first()
+        .expect("wavelet filters contain at least one tap pair");
+    let (first_high, high_pairs) = high_pairs
+        .split_first()
+        .expect("wavelet filters contain at least one tap pair");
+    let mut input_windows: [_; BATCHES] = std::array::from_fn(|batch| {
+        let newest = interior.first_newest + 2 * (first_output + batch * lanes);
         let batch_start = newest + 1 - dec_lo.len();
         let batch_end = newest + 2 * lanes - 1;
-        let input = &signal[batch_start..batch_end];
-        let mut low_earlier = T::Vector::splat(simd, T::default());
-        let mut low_later = T::Vector::splat(simd, T::default());
-        let mut high_earlier = T::Vector::splat(simd, T::default());
-        let mut high_later = T::Vector::splat(simd, T::default());
-        let (low_pairs, low_remainder) = dec_lo.as_chunks::<2>();
-        let (high_pairs, high_remainder) = dec_hi.as_chunks::<2>();
-        debug_assert!(low_remainder.is_empty());
-        debug_assert!(high_remainder.is_empty());
+        signal[batch_start..batch_end]
+            .windows(2 * lanes)
+            .rev()
+            .step_by(2)
+    });
+    let mut accumulators: [AnalysisAccumulators<T::Vector>; BATCHES] =
+        std::array::from_fn(|batch| {
+            let input = input_windows[batch]
+                .next()
+                .expect("filter and input windows have equal lengths");
+            let (first, second) = input.split_at(lanes);
+            let first = T::Vector::from_slice(simd, first);
+            let second = T::Vector::from_slice(simd, second);
+            let (earlier, later) = first.deinterleave(second);
+            AnalysisAccumulators {
+                low_earlier: earlier * first_low[1],
+                low_later: later * first_low[0],
+                high_earlier: earlier * first_high[1],
+                high_later: later * first_high[0],
+            }
+        });
 
-        for ((low, high), input) in low_pairs
-            .iter()
-            .zip(high_pairs)
-            .zip(input.windows(2 * lanes).rev().step_by(2))
-        {
+    for (low, high) in low_pairs.iter().zip(high_pairs) {
+        for (input_windows, accumulators) in input_windows.iter_mut().zip(&mut accumulators) {
+            let input = input_windows
+                .next()
+                .expect("filter and input windows have equal lengths");
             let (first, second) = input.split_at(lanes);
             let first = T::Vector::from_slice(simd, first);
             let second = T::Vector::from_slice(simd, second);
             let (earlier, later) = first.deinterleave(second);
 
-            low_earlier = earlier.mul_add(low[1], low_earlier);
-            low_later = later.mul_add(low[0], low_later);
-            high_earlier = earlier.mul_add(high[1], high_earlier);
-            high_later = later.mul_add(high[0], high_later);
+            accumulators.low_earlier = earlier.mul_add(low[1], accumulators.low_earlier);
+            accumulators.low_later = later.mul_add(low[0], accumulators.low_later);
+            accumulators.high_earlier = earlier.mul_add(high[1], accumulators.high_earlier);
+            accumulators.high_later = later.mul_add(high[0], accumulators.high_later);
         }
-
-        (low_earlier + low_later).store_slice(&mut approx[output..output + lanes]);
-        (high_earlier + high_later).store_slice(&mut detail[output..output + lanes]);
     }
 
-    vectorized_outputs
+    for (batch, accumulators) in accumulators.into_iter().enumerate() {
+        let output = first_output + batch * lanes;
+        (accumulators.low_earlier + accumulators.low_later)
+            .store_slice(&mut approx[output..output + lanes]);
+        (accumulators.high_earlier + accumulators.high_later)
+            .store_slice(&mut detail[output..output + lanes]);
+    }
 }
 
 #[inline(always)]
@@ -145,6 +212,18 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let first_detail = &detail[first_start..first_start + input_len];
     let second_approx = &approx[second_start..second_start + input_len];
     let second_detail = &detail[second_start..second_start + input_len];
+    let (first_first_lo, first_lo) = first_lo
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_first_hi, first_hi) = first_hi
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_second_lo, second_lo) = second_lo
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_second_hi, second_hi) = second_hi
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
     let mut first_low: [T::Vector; BATCHES] =
         std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
     let mut first_high: [T::Vector; BATCHES] =
@@ -154,6 +233,19 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let mut second_high: [T::Vector; BATCHES] =
         std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
 
+    for batch in 0..BATCHES {
+        let start = filter_len - 1 + batch * lanes;
+        let first_approximation = T::Vector::from_slice(simd, &first_approx[start..start + lanes]);
+        let first_detail = T::Vector::from_slice(simd, &first_detail[start..start + lanes]);
+        let second_approximation =
+            T::Vector::from_slice(simd, &second_approx[start..start + lanes]);
+        let second_detail = T::Vector::from_slice(simd, &second_detail[start..start + lanes]);
+        first_low[batch] = first_approximation * *first_first_lo;
+        first_high[batch] = first_detail * *first_first_hi;
+        second_low[batch] = second_approximation * *first_second_lo;
+        second_high[batch] = second_detail * *first_second_hi;
+    }
+
     for (tap, (((first_lo, first_hi), second_lo), second_hi)) in first_lo
         .iter()
         .zip(first_hi)
@@ -161,7 +253,7 @@ fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
         .zip(second_hi)
         .enumerate()
     {
-        let window_start = filter_len - 1 - tap;
+        let window_start = filter_len - 2 - tap;
         for batch in 0..BATCHES {
             let start = window_start + batch * lanes;
             let first_approximation =
@@ -250,6 +342,18 @@ fn inverse_linear_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let input_len = half_filter_len + BATCHES * lanes - 1;
     let approx = &approx[first_pair..first_pair + input_len];
     let detail = &detail[first_pair..first_pair + input_len];
+    let (first_even_lo, even_lo) = even_lo
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_even_hi, even_hi) = even_hi
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_odd_lo, odd_lo) = odd_lo
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
+    let (first_odd_hi, odd_hi) = odd_hi
+        .split_first()
+        .expect("wavelet filters contain at least one polyphase tap");
     let mut even_low: [T::Vector; BATCHES] =
         std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
     let mut even_high: [T::Vector; BATCHES] =
@@ -259,6 +363,16 @@ fn inverse_linear_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
     let mut odd_high: [T::Vector; BATCHES] =
         std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
 
+    for batch in 0..BATCHES {
+        let start = half_filter_len - 1 + batch * lanes;
+        let approximation = T::Vector::from_slice(simd, &approx[start..start + lanes]);
+        let detail = T::Vector::from_slice(simd, &detail[start..start + lanes]);
+        even_low[batch] = approximation * *first_even_lo;
+        even_high[batch] = detail * *first_even_hi;
+        odd_low[batch] = approximation * *first_odd_lo;
+        odd_high[batch] = detail * *first_odd_hi;
+    }
+
     for (tap, (((even_lo, even_hi), odd_lo), odd_hi)) in even_lo
         .iter()
         .zip(even_hi)
@@ -266,7 +380,7 @@ fn inverse_linear_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
         .zip(odd_hi)
         .enumerate()
     {
-        let window_start = half_filter_len - 1 - tap;
+        let window_start = half_filter_len - 2 - tap;
         for batch in 0..BATCHES {
             let start = window_start + batch * lanes;
             let approximation = T::Vector::from_slice(simd, &approx[start..start + lanes]);
