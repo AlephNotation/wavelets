@@ -13,6 +13,7 @@ mod decomposition;
 mod error;
 mod num;
 mod plan;
+mod simd;
 mod wavelet;
 
 pub use boundary::Boundary;

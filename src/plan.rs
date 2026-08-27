@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
 
+use fearless_simd::Level as SimdLevel;
+
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
+use crate::num::inverse_linear_simd;
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
 /// A reusable, fixed-length one-level DWT/IDWT plan.
@@ -62,6 +65,7 @@ struct MultilevelPlanKey {
 pub struct DwtPlanner<T: WaveletNum> {
     cache: HashMap<PlanKey, Weak<dyn Dwt<T>>>,
     multilevel_cache: HashMap<MultilevelPlanKey, Weak<WavedecPlan<T>>>,
+    simd_level: SimdLevel,
     marker: PhantomData<T>,
 }
 
@@ -71,6 +75,7 @@ impl<T: WaveletNum> DwtPlanner<T> {
         Self {
             cache: HashMap::new(),
             multilevel_cache: HashMap::new(),
+            simd_level: SimdLevel::new(),
             marker: PhantomData,
         }
     }
@@ -96,7 +101,8 @@ impl<T: WaveletNum> DwtPlanner<T> {
             return Ok(plan);
         }
 
-        let plan: Arc<dyn Dwt<T>> = Arc::new(ScalarPlan::new(len, wavelet, boundary));
+        let plan: Arc<dyn Dwt<T>> =
+            Arc::new(PlannedDwt::new(len, wavelet, boundary, self.simd_level));
         self.cache.insert(key, Arc::downgrade(&plan));
         Ok(plan)
     }
@@ -171,7 +177,7 @@ enum SampleRule {
 }
 
 #[derive(Debug)]
-struct ScalarPlan<T> {
+struct PlannedDwt<T> {
     signal_len: usize,
     coeff_len: usize,
     dec_lo: Box<[T]>,
@@ -180,10 +186,16 @@ struct ScalarPlan<T> {
     rec_hi: Box<[T]>,
     analysis: Box<[AnalysisOutput]>,
     periodization: bool,
+    simd_level: SimdLevel,
 }
 
-impl<T: WaveletNum> ScalarPlan<T> {
-    fn new(signal_len: usize, wavelet: &Wavelet, boundary: Boundary) -> Self {
+impl<T: WaveletNum> PlannedDwt<T> {
+    fn new(
+        signal_len: usize,
+        wavelet: &Wavelet,
+        boundary: Boundary,
+        simd_level: SimdLevel,
+    ) -> Self {
         let filter_len = wavelet.filter_len();
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
         let dec_lo: Box<[_]> = wavelet.dec_lo().iter().copied().map(T::from_f64).collect();
@@ -200,6 +212,7 @@ impl<T: WaveletNum> ScalarPlan<T> {
             rec_hi,
             analysis,
             periodization: boundary == Boundary::Periodization,
+            simd_level,
         }
     }
 
@@ -208,10 +221,20 @@ impl<T: WaveletNum> ScalarPlan<T> {
         let (even_lo, odd_lo) = self.rec_lo.split_at(half_filter_len);
         let (even_hi, odd_hi) = self.rec_hi.split_at(half_filter_len);
 
+        let vectorized_pairs = inverse_linear_simd(
+            self.simd_level,
+            &self.rec_lo,
+            &self.rec_hi,
+            approx,
+            detail,
+            out,
+        );
+
         // Cropping the full convolution by `filter_len - 2` makes each output
         // pair consume the same reversed coefficient window. Fusing both
         // polyphase dots keeps that window hot and loads it only once.
-        for (coefficient, samples) in out.chunks_mut(2).enumerate() {
+        for (tail_coefficient, samples) in out[2 * vectorized_pairs..].chunks_mut(2).enumerate() {
+            let coefficient = vectorized_pairs + tail_coefficient;
             let coefficient_end = coefficient + half_filter_len;
             let approx = &approx[coefficient..coefficient_end];
             let detail = &detail[coefficient..coefficient_end];
@@ -282,7 +305,7 @@ impl<T: WaveletNum> ScalarPlan<T> {
     }
 }
 
-impl<T: WaveletNum> Dwt<T> for ScalarPlan<T> {
+impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
     fn signal_len(&self) -> usize {
         self.signal_len
     }
