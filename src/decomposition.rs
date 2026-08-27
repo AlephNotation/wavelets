@@ -1,6 +1,9 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use fearless_simd::Level as SimdLevel;
+
+use crate::plan::{PlannedDwt, PreparedFilterBank, validate_plan};
 use crate::{Boundary, Dwt, DwtPlanner, Wavelet, WaveletError, WaveletNum};
 
 /// Selects the number of levels in a multilevel decomposition.
@@ -140,7 +143,7 @@ impl<T> Decomposition<T> {
 pub struct WavedecPlan<T: WaveletNum> {
     wavelet: Wavelet,
     boundary: Boundary,
-    level_plans: Box<[Arc<dyn Dwt<T>>]>,
+    level_plans: Box<[PlannedDwt<T>]>,
     layout: Arc<DecompositionLayout>,
     temp_a_len: usize,
     temp_b_len: usize,
@@ -149,18 +152,20 @@ pub struct WavedecPlan<T: WaveletNum> {
 
 impl<T: WaveletNum> WavedecPlan<T> {
     pub(crate) fn new(
-        planner: &mut DwtPlanner<T>,
         signal_len: usize,
         wavelet: &Wavelet,
         boundary: Boundary,
         levels: usize,
+        filters: PreparedFilterBank<T>,
+        simd_level: SimdLevel,
     ) -> Result<Self, WaveletError> {
         let mut input_lengths = Vec::with_capacity(levels.max(1));
         let mut level_plans = Vec::with_capacity(levels);
         let mut current_len = signal_len;
         for _ in 0..levels {
             input_lengths.push(current_len);
-            let plan = planner.plan_dwt(current_len, wavelet, boundary)?;
+            validate_plan(current_len, boundary)?;
+            let plan = PlannedDwt::new(current_len, boundary, filters.clone(), simd_level);
             current_len = plan.coeff_len();
             level_plans.push(plan);
         }

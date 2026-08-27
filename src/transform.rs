@@ -1,16 +1,18 @@
-use crate::{Boundary, DwtPlanner, Wavelet, WaveletError, WaveletNum};
+use fearless_simd::Level as SimdLevel;
+
+use crate::plan::create_dwt_plan;
+use crate::{Boundary, Dwt, Wavelet, WaveletError, WaveletNum};
 
 /// Computes a single-level one-dimensional discrete wavelet transform.
 ///
 /// This allocating convenience function mirrors PyWavelets' `dwt` operation.
-/// Use [`DwtPlanner`] when repeatedly transforming a fixed signal length.
+/// Use [`crate::DwtPlanner`] when repeatedly transforming a fixed signal length.
 pub fn dwt<T: WaveletNum>(
     signal: &[T],
     wavelet: &Wavelet,
     boundary: Boundary,
 ) -> Result<(Vec<T>, Vec<T>), WaveletError> {
-    let mut planner = DwtPlanner::<T>::new();
-    let plan = planner.plan_dwt(signal.len(), wavelet, boundary)?;
+    let plan = create_dwt_plan(signal.len(), wavelet, boundary, SimdLevel::new())?;
     Ok(plan.forward(signal))
 }
 
@@ -40,8 +42,7 @@ pub fn idwt<T: WaveletNum>(
             boundary: boundary.as_str(),
         },
     )?;
-    let mut planner = DwtPlanner::<T>::new();
-    let plan = planner.plan_dwt(signal_len, wavelet, boundary)?;
+    let plan = create_dwt_plan(signal_len, wavelet, boundary, SimdLevel::new())?;
     debug_assert_eq!(plan.coeff_len(), approx.len());
     Ok(plan.inverse(approx, detail))
 }

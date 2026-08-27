@@ -96,63 +96,96 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
     interior: PeriodizedInterior<'_, T>,
     out: &mut [T],
 ) -> usize {
-    let PeriodizedInterior {
-        first_lo,
-        first_hi,
-        second_lo,
-        second_hi,
-        approx,
-        detail,
-        first_coefficient,
-        second_offset,
-    } = interior;
     let lanes = T::Vector::N;
     let pair_count = out.len() / 2;
     let vectorized_pairs = pair_count - pair_count % lanes;
+    let paired_batch = 2 * lanes;
+    let paired_pairs = pair_count - pair_count % paired_batch;
 
-    for pair in (0..vectorized_pairs).step_by(lanes) {
-        let first_start = first_coefficient + pair + 1 - first_lo.len();
-        let second_start = first_start + second_offset;
-        let input_len = first_lo.len() + lanes - 1;
-        let first_approx = &approx[first_start..first_start + input_len];
-        let first_detail = &detail[first_start..first_start + input_len];
-        let second_approx = &approx[second_start..second_start + input_len];
-        let second_detail = &detail[second_start..second_start + input_len];
-        let mut first_low = T::Vector::splat(simd, T::default());
-        let mut first_high = T::Vector::splat(simd, T::default());
-        let mut second_low = T::Vector::splat(simd, T::default());
-        let mut second_high = T::Vector::splat(simd, T::default());
-
-        for (
-            (
-                (((((first_lo, first_hi), second_lo), second_hi), first_approx), first_detail),
-                second_approx,
-            ),
-            second_detail,
-        ) in first_lo
-            .iter()
-            .zip(first_hi)
-            .zip(second_lo)
-            .zip(second_hi)
-            .zip(first_approx.windows(lanes).rev())
-            .zip(first_detail.windows(lanes).rev())
-            .zip(second_approx.windows(lanes).rev())
-            .zip(second_detail.windows(lanes).rev())
-        {
-            first_low = T::Vector::from_slice(simd, first_approx).mul_add(*first_lo, first_low);
-            first_high = T::Vector::from_slice(simd, first_detail).mul_add(*first_hi, first_high);
-            second_low = T::Vector::from_slice(simd, second_approx).mul_add(*second_lo, second_low);
-            second_high =
-                T::Vector::from_slice(simd, second_detail).mul_add(*second_hi, second_high);
-        }
-
-        let (first, second) = (first_low + first_high).interleave(second_low + second_high);
-        let output = 2 * pair;
-        first.store_slice(&mut out[output..output + lanes]);
-        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+    for pair in (0..paired_pairs).step_by(paired_batch) {
+        inverse_periodized_batch::<_, _, 2>(
+            simd,
+            &interior,
+            out,
+            interior.first_coefficient + pair,
+        );
+    }
+    if paired_pairs < vectorized_pairs {
+        inverse_periodized_batch::<_, _, 1>(
+            simd,
+            &interior,
+            out,
+            interior.first_coefficient + paired_pairs,
+        );
     }
 
     vectorized_pairs
+}
+
+#[inline(always)]
+fn inverse_periodized_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+    simd: S,
+    interior: &PeriodizedInterior<'_, T>,
+    out: &mut [T],
+    first_coefficient: usize,
+) {
+    let first_lo = interior.first_lo;
+    let first_hi = interior.first_hi;
+    let second_lo = interior.second_lo;
+    let second_hi = interior.second_hi;
+    let approx = interior.approx;
+    let detail = interior.detail;
+    let second_offset = interior.second_offset;
+    let lanes = T::Vector::N;
+    let filter_len = first_lo.len();
+    let first_start = first_coefficient + 1 - filter_len;
+    let second_start = first_start + second_offset;
+    let input_len = filter_len + BATCHES * lanes - 1;
+    let first_approx = &approx[first_start..first_start + input_len];
+    let first_detail = &detail[first_start..first_start + input_len];
+    let second_approx = &approx[second_start..second_start + input_len];
+    let second_detail = &detail[second_start..second_start + input_len];
+    let mut first_low: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut first_high: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut second_low: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut second_high: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+
+    for (tap, (((first_lo, first_hi), second_lo), second_hi)) in first_lo
+        .iter()
+        .zip(first_hi)
+        .zip(second_lo)
+        .zip(second_hi)
+        .enumerate()
+    {
+        let window_start = filter_len - 1 - tap;
+        for batch in 0..BATCHES {
+            let start = window_start + batch * lanes;
+            let first_approximation =
+                T::Vector::from_slice(simd, &first_approx[start..start + lanes]);
+            let first_detail = T::Vector::from_slice(simd, &first_detail[start..start + lanes]);
+            let second_approximation =
+                T::Vector::from_slice(simd, &second_approx[start..start + lanes]);
+            let second_detail = T::Vector::from_slice(simd, &second_detail[start..start + lanes]);
+            first_low[batch] = first_approximation.mul_add(*first_lo, first_low[batch]);
+            first_high[batch] = first_detail.mul_add(*first_hi, first_high[batch]);
+            second_low[batch] = second_approximation.mul_add(*second_lo, second_low[batch]);
+            second_high[batch] = second_detail.mul_add(*second_hi, second_high[batch]);
+        }
+    }
+
+    let first_pair = first_coefficient - (filter_len - 1);
+    for batch in 0..BATCHES {
+        let first = first_low[batch] + first_high[batch];
+        let second = second_low[batch] + second_high[batch];
+        let (first, second) = first.interleave(second);
+        let output = 2 * (first_pair + batch * lanes);
+        first.store_slice(&mut out[output..output + lanes]);
+        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+    }
 }
 
 #[inline(always)]
@@ -173,45 +206,86 @@ pub(crate) fn inverse_linear<S: Simd, T: SimdSample<S>>(
     let lanes = T::Vector::N;
     let pair_count = out.len() / 2;
     let vectorized_pairs = pair_count - pair_count % lanes;
+    let paired_batch = 2 * lanes;
+    let paired_pairs = pair_count - pair_count % paired_batch;
 
-    for pair in (0..vectorized_pairs).step_by(lanes) {
-        let input_end = pair + half_filter_len + lanes - 1;
-        let approx = &approx[pair..input_end];
-        let detail = &detail[pair..input_end];
-        // Four independent accumulators expose enough instruction-level
-        // parallelism for FMA without creating one long dependency chain.
-        let mut even_low = T::Vector::splat(simd, T::default());
-        let mut even_high = T::Vector::splat(simd, T::default());
-        let mut odd_low = T::Vector::splat(simd, T::default());
-        let mut odd_high = T::Vector::splat(simd, T::default());
-        for (
-            ((((even_low_filter, even_high_filter), odd_low_filter), odd_high_filter), approx),
+    for pair in (0..paired_pairs).step_by(paired_batch) {
+        inverse_linear_batch::<_, _, 2>(
+            simd,
+            (even_lo, even_hi),
+            (odd_lo, odd_hi),
+            approx,
             detail,
-        ) in even_lo
-            .iter()
-            .zip(even_hi)
-            .zip(odd_lo)
-            .zip(odd_hi)
-            .zip(approx.windows(lanes).rev())
-            .zip(detail.windows(lanes).rev())
-        {
-            let approximation = T::Vector::from_slice(simd, approx);
-            let detail = T::Vector::from_slice(simd, detail);
-            even_low = approximation.mul_add(*even_low_filter, even_low);
-            even_high = detail.mul_add(*even_high_filter, even_high);
-            odd_low = approximation.mul_add(*odd_low_filter, odd_low);
-            odd_high = detail.mul_add(*odd_high_filter, odd_high);
-        }
-
-        let even = even_low + even_high;
-        let odd = odd_low + odd_high;
-        let (first, second) = even.interleave(odd);
-        let output = 2 * pair;
-        first.store_slice(&mut out[output..output + lanes]);
-        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+            out,
+            pair,
+        );
+    }
+    if paired_pairs < vectorized_pairs {
+        inverse_linear_batch::<_, _, 1>(
+            simd,
+            (even_lo, even_hi),
+            (odd_lo, odd_hi),
+            approx,
+            detail,
+            out,
+            paired_pairs,
+        );
     }
 
     vectorized_pairs
+}
+
+#[inline(always)]
+fn inverse_linear_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+    simd: S,
+    (even_lo, even_hi): (&[T], &[T]),
+    (odd_lo, odd_hi): (&[T], &[T]),
+    approx: &[T],
+    detail: &[T],
+    out: &mut [T],
+    first_pair: usize,
+) {
+    let lanes = T::Vector::N;
+    let half_filter_len = even_lo.len();
+    let input_len = half_filter_len + BATCHES * lanes - 1;
+    let approx = &approx[first_pair..first_pair + input_len];
+    let detail = &detail[first_pair..first_pair + input_len];
+    let mut even_low: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut even_high: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut odd_low: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+    let mut odd_high: [T::Vector; BATCHES] =
+        std::array::from_fn(|_| T::Vector::splat(simd, T::default()));
+
+    for (tap, (((even_lo, even_hi), odd_lo), odd_hi)) in even_lo
+        .iter()
+        .zip(even_hi)
+        .zip(odd_lo)
+        .zip(odd_hi)
+        .enumerate()
+    {
+        let window_start = half_filter_len - 1 - tap;
+        for batch in 0..BATCHES {
+            let start = window_start + batch * lanes;
+            let approximation = T::Vector::from_slice(simd, &approx[start..start + lanes]);
+            let detail = T::Vector::from_slice(simd, &detail[start..start + lanes]);
+            even_low[batch] = approximation.mul_add(*even_lo, even_low[batch]);
+            even_high[batch] = detail.mul_add(*even_hi, even_high[batch]);
+            odd_low[batch] = approximation.mul_add(*odd_lo, odd_low[batch]);
+            odd_high[batch] = detail.mul_add(*odd_hi, odd_high[batch]);
+        }
+    }
+
+    for batch in 0..BATCHES {
+        let even = even_low[batch] + even_high[batch];
+        let odd = odd_low[batch] + odd_high[batch];
+        let (first, second) = even.interleave(odd);
+        let output = 2 * (first_pair + batch * lanes);
+        first.store_slice(&mut out[output..output + lanes]);
+        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+    }
 }
 
 #[cfg(test)]

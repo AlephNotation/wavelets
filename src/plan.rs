@@ -92,7 +92,6 @@ impl<T: WaveletNum> DwtPlanner<T> {
         wavelet: &Wavelet,
         boundary: Boundary,
     ) -> Result<Arc<dyn Dwt<T>>, WaveletError> {
-        validate_plan(len, boundary)?;
         let key = PlanKey {
             signal_len: len,
             wavelet_id: wavelet.id(),
@@ -103,7 +102,7 @@ impl<T: WaveletNum> DwtPlanner<T> {
         }
 
         let plan: Arc<dyn Dwt<T>> =
-            Arc::new(PlannedDwt::new(len, wavelet, boundary, self.simd_level));
+            Arc::new(create_dwt_plan(len, wavelet, boundary, self.simd_level)?);
         self.cache.insert(key, Arc::downgrade(&plan));
         Ok(plan)
     }
@@ -131,7 +130,15 @@ impl<T: WaveletNum> DwtPlanner<T> {
             return Ok(plan);
         }
 
-        let plan = Arc::new(WavedecPlan::new(self, len, wavelet, boundary, levels)?);
+        let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization);
+        let plan = Arc::new(WavedecPlan::new(
+            len,
+            wavelet,
+            boundary,
+            levels,
+            filters,
+            self.simd_level,
+        )?);
         self.multilevel_cache.insert(key, Arc::downgrade(&plan));
         Ok(plan)
     }
@@ -143,7 +150,7 @@ impl<T: WaveletNum> Default for DwtPlanner<T> {
     }
 }
 
-fn validate_plan(len: usize, boundary: Boundary) -> Result<(), WaveletError> {
+pub(crate) fn validate_plan(len: usize, boundary: Boundary) -> Result<(), WaveletError> {
     if len == 0 {
         return Err(WaveletError::EmptySignal);
     }
@@ -157,9 +164,15 @@ fn validate_plan(len: usize, boundary: Boundary) -> Result<(), WaveletError> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct EdgeOutput {
-    samples: Box<[SampleRule]>,
+pub(crate) fn create_dwt_plan<T: WaveletNum>(
+    len: usize,
+    wavelet: &Wavelet,
+    boundary: Boundary,
+    simd_level: SimdLevel,
+) -> Result<PlannedDwt<T>, WaveletError> {
+    validate_plan(len, boundary)?;
+    let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization);
+    Ok(PlannedDwt::new(len, boundary, filters, simd_level))
 }
 
 #[derive(Debug)]
@@ -170,9 +183,9 @@ struct InteriorAnalysis {
 
 #[derive(Debug)]
 struct AnalysisPlan {
-    prefix: Box<[EdgeOutput]>,
+    edge_rules: Box<[SampleRule]>,
+    prefix_len: usize,
     interior: Option<InteriorAnalysis>,
-    suffix: Box<[EdgeOutput]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -187,7 +200,7 @@ impl PeriodizedSynthesis {
     fn new(signal_len: usize, coeff_len: usize, filter_len: usize) -> Self {
         let half_filter_len = filter_len / 2;
         let shift = half_filter_len - 1;
-        let phases_are_swapped = !shift.is_multiple_of(2);
+        let phases_are_swapped = periodized_phases_are_swapped(filter_len);
         let initial_coefficient = (shift / 2) % coeff_len;
         let complete_pairs = signal_len / 2;
         let (simd_start, simd_available) = if coeff_len >= half_filter_len {
@@ -209,6 +222,10 @@ impl PeriodizedSynthesis {
     }
 }
 
+fn periodized_phases_are_swapped(filter_len: usize) -> bool {
+    !(filter_len / 2 - 1).is_multiple_of(2)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum SampleRule {
     Zero,
@@ -218,46 +235,75 @@ enum SampleRule {
     Antireflect { index: isize },
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedFilterBank<T> {
+    data: Arc<[T]>,
+    filter_len: usize,
+}
+
+impl<T: WaveletNum> PreparedFilterBank<T> {
+    pub(crate) fn new(wavelet: &Wavelet, periodized: bool) -> Self {
+        let filter_len = wavelet.filter_len();
+        let mut data = Vec::with_capacity(4 * filter_len);
+        data.extend(wavelet.dec_lo().iter().copied().map(T::from_f64));
+        data.extend(wavelet.dec_hi().iter().copied().map(T::from_f64));
+
+        let rec_lo_start = data.len();
+        extend_polyphase(&mut data, wavelet.rec_lo());
+        if periodized && periodized_phases_are_swapped(filter_len) {
+            data[rec_lo_start..].rotate_left(filter_len / 2);
+        }
+
+        let rec_hi_start = data.len();
+        extend_polyphase(&mut data, wavelet.rec_hi());
+        if periodized && periodized_phases_are_swapped(filter_len) {
+            data[rec_hi_start..].rotate_left(filter_len / 2);
+        }
+
+        Self {
+            data: data.into(),
+            filter_len,
+        }
+    }
+
+    fn analysis(&self) -> (&[T], &[T]) {
+        let (dec_lo, remaining) = self.data.split_at(self.filter_len);
+        let (dec_hi, _) = remaining.split_at(self.filter_len);
+        (dec_lo, dec_hi)
+    }
+
+    fn synthesis(&self) -> (&[T], &[T]) {
+        let synthesis = &self.data[2 * self.filter_len..];
+        synthesis.split_at(self.filter_len)
+    }
+}
+
 #[derive(Debug)]
-struct PlannedDwt<T> {
+pub(crate) struct PlannedDwt<T> {
     signal_len: usize,
     coeff_len: usize,
-    dec_lo: Box<[T]>,
-    dec_hi: Box<[T]>,
-    rec_lo: Box<[T]>,
-    rec_hi: Box<[T]>,
+    filters: PreparedFilterBank<T>,
     analysis: AnalysisPlan,
     periodized_synthesis: Option<PeriodizedSynthesis>,
     simd_level: SimdLevel,
 }
 
 impl<T: WaveletNum> PlannedDwt<T> {
-    fn new(
+    pub(crate) fn new(
         signal_len: usize,
-        wavelet: &Wavelet,
         boundary: Boundary,
+        filters: PreparedFilterBank<T>,
         simd_level: SimdLevel,
     ) -> Self {
-        let filter_len = wavelet.filter_len();
+        let filter_len = filters.filter_len;
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
-        let dec_lo: Box<[_]> = wavelet.dec_lo().iter().copied().map(T::from_f64).collect();
-        let dec_hi: Box<[_]> = wavelet.dec_hi().iter().copied().map(T::from_f64).collect();
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
-        let mut rec_lo = polyphase_filter(wavelet.rec_lo());
-        let mut rec_hi = polyphase_filter(wavelet.rec_hi());
-        if periodized_synthesis.is_some_and(|layout| layout.phases_are_swapped) {
-            rec_lo.rotate_left(filter_len / 2);
-            rec_hi.rotate_left(filter_len / 2);
-        }
         let analysis = build_analysis(signal_len, coeff_len, filter_len, boundary);
         Self {
             signal_len,
             coeff_len,
-            dec_lo,
-            dec_hi,
-            rec_lo,
-            rec_hi,
+            filters,
             analysis,
             periodized_synthesis,
             simd_level,
@@ -265,15 +311,16 @@ impl<T: WaveletNum> PlannedDwt<T> {
     }
 
     fn inverse_linear(&self, approx: &[T], detail: &[T], out: &mut [T]) {
-        let half_filter_len = self.rec_lo.len() / 2;
-        let (even_lo, odd_lo) = self.rec_lo.split_at(half_filter_len);
-        let (even_hi, odd_hi) = self.rec_hi.split_at(half_filter_len);
+        let (rec_lo, rec_hi) = self.filters.synthesis();
+        let half_filter_len = rec_lo.len() / 2;
+        let (even_lo, odd_lo) = rec_lo.split_at(half_filter_len);
+        let (even_hi, odd_hi) = rec_hi.split_at(half_filter_len);
 
         let vectorized_pairs = inverse_linear_simd(
             self.simd_level,
             LinearSynthesis {
-                rec_lo: &self.rec_lo,
-                rec_hi: &self.rec_hi,
+                rec_lo,
+                rec_hi,
                 approx,
                 detail,
             },
@@ -303,9 +350,10 @@ impl<T: WaveletNum> PlannedDwt<T> {
         detail: &[T],
         out: &mut [T],
     ) {
-        let half_filter_len = self.rec_lo.len() / 2;
-        let (first_lo, second_lo) = self.rec_lo.split_at(half_filter_len);
-        let (first_hi, second_hi) = self.rec_hi.split_at(half_filter_len);
+        let (rec_lo, rec_hi) = self.filters.synthesis();
+        let half_filter_len = rec_lo.len() / 2;
+        let (first_lo, second_lo) = rec_lo.split_at(half_filter_len);
+        let (first_hi, second_hi) = rec_hi.split_at(half_filter_len);
 
         let (scalar_prefix, remainder) = out[..2 * layout.simd_start].as_chunks_mut::<2>();
         debug_assert!(remainder.is_empty());
@@ -384,12 +432,14 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             "scratch buffer is too small"
         );
 
-        let prefix_len = self.analysis.prefix.len();
+        let (dec_lo, dec_hi) = self.filters.analysis();
+        let prefix_len = self.analysis.prefix_len;
+        let prefix_rules_end = prefix_len * dec_lo.len();
         analyze_edges(
             signal,
-            &self.dec_lo,
-            &self.dec_hi,
-            &self.analysis.prefix,
+            dec_lo,
+            dec_hi,
+            &self.analysis.edge_rules[..prefix_rules_end],
             &mut approx[..prefix_len],
             &mut detail[..prefix_len],
         );
@@ -402,8 +452,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             let vectorized = forward_interior_simd(
                 self.simd_level,
                 AnalysisInterior {
-                    dec_lo: &self.dec_lo,
-                    dec_hi: &self.dec_hi,
+                    dec_lo,
+                    dec_hi,
                     signal,
                     first_newest: interior.first_newest,
                 },
@@ -413,7 +463,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
             for output in vectorized..interior.output_len {
                 let newest = interior.first_newest + 2 * output;
-                let (low, high) = analyze_interior(signal, newest, &self.dec_lo, &self.dec_hi);
+                let (low, high) = analyze_interior(signal, newest, dec_lo, dec_hi);
                 interior_approx[output] = low;
                 interior_detail[output] = high;
             }
@@ -422,9 +472,9 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
         analyze_edges(
             signal,
-            &self.dec_lo,
-            &self.dec_hi,
-            &self.analysis.suffix,
+            dec_lo,
+            dec_hi,
+            &self.analysis.edge_rules[prefix_rules_end..],
             &mut approx[suffix_start..],
             &mut detail[suffix_start..],
         );
@@ -451,15 +501,16 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
     }
 }
 
-fn polyphase_filter<T: WaveletNum>(filter: &[f64]) -> Box<[T]> {
+fn extend_polyphase<T: WaveletNum>(out: &mut Vec<T>, filter: &[f64]) {
     debug_assert!(filter.len().is_multiple_of(2));
-    filter
-        .iter()
-        .step_by(2)
-        .chain(filter.iter().skip(1).step_by(2))
-        .copied()
-        .map(T::from_f64)
-        .collect()
+    out.extend(
+        filter
+            .iter()
+            .step_by(2)
+            .chain(filter.iter().skip(1).step_by(2))
+            .copied()
+            .map(T::from_f64),
+    );
 }
 
 #[inline(always)]
@@ -633,26 +684,22 @@ fn build_analysis(
     debug_assert!((interior_end..coeff_len).all(|coefficient| !is_interior(coefficient)));
 
     let prefix_end = interior_start.unwrap_or(coeff_len);
-    let build_edges = |range: std::ops::Range<usize>| {
-        range
-            .map(|coefficient| {
-                let newest = (2 * coefficient + phase) as isize;
-                EdgeOutput {
-                    samples: (0..filter_len)
-                        .map(|tap| extension_rule(newest - tap as isize, signal_len, boundary))
-                        .collect(),
-                }
-            })
-            .collect()
-    };
+    let edge_count = prefix_end + coeff_len - interior_end;
+    let mut edge_rules = Vec::with_capacity(edge_count * filter_len);
+    for coefficient in (0..prefix_end).chain(interior_end..coeff_len) {
+        let newest = (2 * coefficient + phase) as isize;
+        edge_rules.extend(
+            (0..filter_len).map(|tap| extension_rule(newest - tap as isize, signal_len, boundary)),
+        );
+    }
 
     AnalysisPlan {
-        prefix: build_edges(0..prefix_end),
+        edge_rules: edge_rules.into_boxed_slice(),
+        prefix_len: prefix_end,
         interior: interior_start.map(|start| InteriorAnalysis {
             first_newest: 2 * start + phase,
             output_len: interior_end - start,
         }),
-        suffix: build_edges(interior_end..coeff_len),
     }
 }
 
@@ -678,16 +725,19 @@ fn analyze_edges<T: WaveletNum>(
     signal: &[T],
     dec_lo: &[T],
     dec_hi: &[T],
-    edges: &[EdgeOutput],
+    rules: &[SampleRule],
     approx: &mut [T],
     detail: &mut [T],
 ) {
-    debug_assert_eq!(edges.len(), approx.len());
-    debug_assert_eq!(edges.len(), detail.len());
-    for (edge, (approximation, detail)) in edges.iter().zip(approx.iter_mut().zip(detail)) {
+    debug_assert_eq!(rules.len(), approx.len() * dec_lo.len());
+    debug_assert_eq!(approx.len(), detail.len());
+    for (rules, (approximation, detail)) in rules
+        .chunks_exact(dec_lo.len())
+        .zip(approx.iter_mut().zip(detail))
+    {
         let mut low = T::zero();
         let mut high = T::zero();
-        for (tap, rule) in edge.samples.iter().copied().enumerate() {
+        for (tap, rule) in rules.iter().copied().enumerate() {
             let sample = evaluate_sample(signal, rule);
             low += dec_lo[tap] * sample;
             high += dec_hi[tap] * sample;
