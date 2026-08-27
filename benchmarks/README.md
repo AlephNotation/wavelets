@@ -75,6 +75,12 @@ reusable-buffer APIs; PyWavelets reports its normal allocating API. Raw samples
 and complete environment metadata are written to
 `benchmarks/reports/comparison.json`.
 
+Curated release results are checked into `benchmarks/results/` with the raw
+samples that produced each published table. Those reports identify the exact
+Git revision and whether tracked source files were dirty during measurement.
+GitHub-hosted runners are suitable for integration smoke tests, but their
+timings are not published as representative hardware results.
+
 Use the general sampling and case filters for a short integration run:
 
 ```text

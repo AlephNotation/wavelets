@@ -7,6 +7,12 @@ use crate::{Boundary, Dwt, Wavelet, WaveletError, WaveletNum};
 ///
 /// This allocating convenience function mirrors PyWavelets' `dwt` operation.
 /// Use [`crate::DwtPlanner`] when repeatedly transforming a fixed signal length.
+///
+/// # Errors
+///
+/// Returns [`WaveletError::EmptySignal`] for an empty signal, or
+/// [`WaveletError::BoundaryRequiresLongerSignal`] when the selected extension
+/// mode is undefined for the input length.
 pub fn dwt<T: WaveletNum>(
     signal: &[T],
     wavelet: &Wavelet,
@@ -23,6 +29,13 @@ pub fn dwt<T: WaveletNum>(
 /// `idwt(dwt(odd_length_signal))` contains one additional boundary-derived
 /// sample. A fixed-length plan remembers and reconstructs the exact original
 /// length instead.
+///
+/// # Errors
+///
+/// Returns [`WaveletError::CoefficientLengthMismatch`] when the two bands have
+/// different lengths, [`WaveletError::InvalidCoefficientLength`] when their
+/// shared length cannot imply an inverse transform, or a planning error when
+/// the selected boundary mode is undefined for the implied length.
 pub fn idwt<T: WaveletNum>(
     approx: &[T],
     detail: &[T],

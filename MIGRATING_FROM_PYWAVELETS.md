@@ -13,12 +13,16 @@ The API is Rust-native rather than Python source-compatible.
 | `pywt.Wavelet("coif4")` | `Wavelet::coiflet(4)?` |
 | `pywt.Wavelet("bior4.4")` | `Wavelet::biorthogonal(4, 4)?` |
 | `pywt.Wavelet("rbio4.4")` | `Wavelet::reverse_biorthogonal(4, 4)?` |
+| `wavelet.name` | `wavelet.name()` or `wavelet.to_string()` |
+| `wavelet.filter_bank` | `(wavelet.dec_lo(), wavelet.dec_hi(), wavelet.rec_lo(), wavelet.rec_hi())` |
 | mode `"symmetric"` | `"symmetric".parse::<Boundary>()?` or `Boundary::Symmetric` |
 | `pywt.dwt(x, wavelet, mode)` | `dwt(&x, &wavelet, boundary)?` |
 | `pywt.idwt(c_a, c_d, wavelet, mode)` | `idwt(&c_a, &c_d, &wavelet, boundary)?` |
 | `pywt.wavedec(x, wavelet, mode, level=None)` | `wavedec(&x, &wavelet, boundary, Level::Max)?` |
 | `pywt.wavedec(..., level=n)` | `wavedec(..., Level::Exact(n))?` |
 | `[cA_L, cD_L, ..., cD_1]` | `decomposition.bands()` |
+| `coeffs[0]` | `decomposition.approx()` |
+| detail `cD_n` | `decomposition.detail(n)` |
 | `pywt.waverec(coeffs, wavelet, mode)` | `waverec(&decomposition)?` |
 | `pywt.dwt_max_level(len, filter_len)` | `dwt_max_level(len, filter_len)` |
 
@@ -51,13 +55,54 @@ A `DwtPlanner` plan knows the original input length and its `inverse` method
 returns exactly that length. `Decomposition` retains the same information for
 `waverec`.
 
+## Repeated transforms
+
+Python callers normally repeat `pywt.dwt` or `pywt.wavedec`. In Rust, move
+configuration-dependent work out of the loop:
+
+```rust
+use wavelets::{Boundary, DwtPlanner, Wavelet};
+
+let wavelet = Wavelet::daubechies(4)?;
+let mut planner = DwtPlanner::<f64>::new();
+let plan = planner.plan_dwt(4096, &wavelet, Boundary::Symmetric)?;
+
+let signal = vec![0.0; plan.signal_len()];
+let mut c_a = vec![0.0; plan.coeff_len()];
+let mut c_d = vec![0.0; plan.coeff_len()];
+let mut scratch = vec![0.0; plan.scratch_len()];
+
+plan.forward_into(&signal, &mut c_a, &mut c_d, &mut scratch);
+# Ok::<(), wavelets::WaveletError>(())
+```
+
+Planning and buffer allocation are outside the hot path. Plans are immutable,
+`Send + Sync`, and cheaply shared through the `Arc` returned by the planner.
+Concurrent calls must provide separate mutable output and scratch buffers.
+
+The same pattern applies to `plan_wavedec`: allocate one `Decomposition` with
+`allocate_decomposition`, allocate `scratch_len()` samples once, and reuse both.
+
+## Errors and buffer contracts
+
+Rust construction and planning failures return `WaveletError`. Once a plan has
+been constructed, wrong buffer lengths represent a caller programming error and
+the `_into` methods panic. Use `signal_len`, `coeff_len`, and `scratch_len` from
+the plan instead of reproducing the sizing formulas.
+
+`Decomposition::detail` uses one-based mathematical levels: `detail(1)` is
+`cD_1`, while `bands()` iterates in PyWavelets list order, `cA_L, cD_L, ...,
+cD_1`. `as_slice()` and `as_mut_slice()` expose that same contiguous physical
+order.
+
 ## Current boundary
 
 The compatible subset currently covers one-dimensional `f32` and `f64`
 transforms, Haar, `db1..db38`, `sym2..sym20`, `coif1..coif17`, all 15 `bior`
 pairs and their `rbio` reverses, custom filter banks, and all nine extension
 modes. Complex values, multidimensional axes, omitted single-level coefficient
-bands, and PyWavelets' other transform families are not implemented yet.
+bands, borrowed decomposition construction, and PyWavelets' other transform
+families are not implemented yet.
 
 For repeated transforms, replace the allocating facade with `DwtPlanner` or
 `WavedecPlan`. Planning fixes the signal length, wavelet, boundary mode, buffer

@@ -28,7 +28,7 @@ pub enum WaveletError {
         /// The unrecognized name.
         name: String,
     },
-    /// The requested built-in wavelet is not available yet.
+    /// The requested built-in wavelet is not available.
     UnsupportedWavelet {
         /// The wavelet family name.
         family: &'static str,

@@ -1,3 +1,4 @@
+use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,6 +46,20 @@ struct WaveletData {
 ///
 /// Cloning a `Wavelet` only clones an [`Arc`]. Filter coefficients use the
 /// same ordering as PyWavelets' `filter_bank` property.
+///
+/// # Examples
+///
+/// ```
+/// use wavelets::{Wavelet, WaveletFamily};
+///
+/// let wavelet: Wavelet = "db4".parse()?;
+/// assert_eq!(wavelet.name(), "db4");
+/// assert_eq!(wavelet.to_string(), "db4");
+/// assert_eq!(wavelet.family(), WaveletFamily::Daubechies);
+/// assert_eq!(wavelet.filter_len(), 8);
+/// assert!(wavelet.is_orthogonal());
+/// # Ok::<(), wavelets::WaveletError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Wavelet(Arc<WaveletData>);
 
@@ -63,6 +78,12 @@ impl Wavelet {
     ///
     /// Names for families that are recognized but not implemented return
     /// [`WaveletError::UnsupportedWavelet`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnknownWavelet`] when the name is not a
+    /// recognized canonical name, or [`WaveletError::UnsupportedWavelet`] when
+    /// its family is known but the requested order is unavailable.
     pub fn from_name(name: &str) -> Result<Self, WaveletError> {
         if name == "haar" {
             return Ok(Self::haar());
@@ -90,6 +111,10 @@ impl Wavelet {
     /// Constructs a Daubechies wavelet.
     ///
     /// Orders `db1` through `db38` are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnsupportedWavelet`] outside that range.
     pub fn daubechies(n: usize) -> Result<Self, WaveletError> {
         let Some(dec_lo) = coefficients::daubechies(n) else {
             return Err(WaveletError::UnsupportedWavelet {
@@ -108,6 +133,10 @@ impl Wavelet {
     /// Constructs a least-asymmetric Symlet wavelet.
     ///
     /// Orders `sym2` through `sym20` are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnsupportedWavelet`] outside that range.
     pub fn symlet(n: usize) -> Result<Self, WaveletError> {
         let Some(dec_lo) = coefficients::symlet(n) else {
             return Err(WaveletError::UnsupportedWavelet {
@@ -127,6 +156,10 @@ impl Wavelet {
     ///
     /// Orders `coif1` through `coif17` are available. A Coiflet of order `n`
     /// has `2 * n` vanishing wavelet moments.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnsupportedWavelet`] outside that range.
     pub fn coiflet(n: usize) -> Result<Self, WaveletError> {
         let Some(dec_lo) = coefficients::coiflet(n) else {
             return Err(WaveletError::UnsupportedWavelet {
@@ -147,6 +180,10 @@ impl Wavelet {
     ///
     /// The available pairs are `1.1`, `1.3`, `1.5`, `2.2`, `2.4`, `2.6`,
     /// `2.8`, `3.1`, `3.3`, `3.5`, `3.7`, `3.9`, `4.4`, `5.5`, and `6.8`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnsupportedWavelet`] for any other pair.
     pub fn biorthogonal(nr: usize, nd: usize) -> Result<Self, WaveletError> {
         let Some((dec_lo, rec_lo)) = coefficients::biorthogonal(nr, nd) else {
             return Err(WaveletError::UnsupportedWavelet {
@@ -167,6 +204,10 @@ impl Wavelet {
     /// and decomposition orders.
     ///
     /// The available pairs are the same as for [`Wavelet::biorthogonal`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::UnsupportedWavelet`] for any other pair.
     pub fn reverse_biorthogonal(nr: usize, nd: usize) -> Result<Self, WaveletError> {
         let Some((bior_dec_lo, bior_rec_lo)) = coefficients::biorthogonal(nr, nd) else {
             return Err(WaveletError::UnsupportedWavelet {
@@ -190,6 +231,28 @@ impl Wavelet {
     /// All four filters must have the same, positive, even length and contain
     /// only finite values. Mathematical perfect reconstruction is a property of
     /// the supplied filters and is not inferred from approximate coefficients.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::InvalidFilterBank`] when the structural
+    /// requirements above are not met.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::f64::consts::FRAC_1_SQRT_2;
+    /// use wavelets::Wavelet;
+    ///
+    /// let s = FRAC_1_SQRT_2;
+    /// let custom = Wavelet::from_filters(
+    ///     &[s, s],
+    ///     &[-s, s],
+    ///     &[s, s],
+    ///     &[s, -s],
+    /// )?;
+    /// assert_eq!(custom.filter_len(), 2);
+    /// # Ok::<(), wavelets::WaveletError>(())
+    /// ```
     pub fn from_filters(
         dec_lo: &[f64],
         dec_hi: &[f64],
@@ -415,6 +478,12 @@ impl FromStr for Wavelet {
     }
 }
 
+impl Display for Wavelet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 fn parse_integer_name(name: &str, prefix: &str) -> Option<usize> {
     let digits = name.strip_prefix(prefix)?;
     if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {
@@ -457,7 +526,9 @@ mod tests {
     #[test]
     fn canonical_names_construct_built_ins() {
         assert_eq!(Wavelet::from_name("haar").unwrap().name(), "haar");
-        assert_eq!("db4".parse::<Wavelet>().unwrap().name(), "db4");
+        let db4 = "db4".parse::<Wavelet>().unwrap();
+        assert_eq!(db4.name(), "db4");
+        assert_eq!(db4.to_string(), "db4");
         assert_eq!(Wavelet::from_name("sym4").unwrap().name(), "sym4");
         assert_eq!(Wavelet::from_name("coif4").unwrap().name(), "coif4");
         assert_eq!(Wavelet::from_name("bior4.4").unwrap().name(), "bior4.4");

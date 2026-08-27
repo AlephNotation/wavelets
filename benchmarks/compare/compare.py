@@ -460,6 +460,30 @@ def host_metadata() -> dict[str, Any]:
         "wavelets": wavelets_package["version"],
         "rustflags": os.environ.get("RUSTFLAGS", ""),
         "rust_profile": "release",
+        **source_metadata(),
+    }
+
+
+def source_metadata() -> dict[str, Any]:
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if revision.returncode != 0 or status.returncode != 0:
+        return {"git_revision": None, "git_dirty": None}
+    return {
+        "git_revision": revision.stdout.strip(),
+        "git_dirty": bool(status.stdout.strip()),
     }
 
 

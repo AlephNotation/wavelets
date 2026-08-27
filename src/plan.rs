@@ -13,6 +13,11 @@ use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 ///
 /// Buffer-size mistakes are programming errors and cause the `_into` methods
 /// to panic. Use the plan's sizing methods to prepare buffers once.
+///
+/// Plans are returned behind [`Arc`] by [`DwtPlanner::plan_dwt`], so cloning a
+/// plan handle is cheap and the same immutable plan can be shared between
+/// threads. Each concurrent execution must use distinct output and scratch
+/// buffers.
 pub trait Dwt<T: WaveletNum>: Send + Sync {
     /// Returns the input and reconstructed signal length fixed by this plan.
     fn signal_len(&self) -> usize;
@@ -24,6 +29,10 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     fn scratch_len(&self) -> usize;
 
     /// Allocates and computes `(approximation, detail)` coefficients.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `signal.len()` differs from [`Self::signal_len`].
     fn forward(&self, signal: &[T]) -> (Vec<T>, Vec<T>) {
         let mut approx = vec![T::zero(); self.coeff_len()];
         let mut detail = vec![T::zero(); self.coeff_len()];
@@ -33,6 +42,11 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     }
 
     /// Allocates and reconstructs a signal of [`Self::signal_len`] samples.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless both coefficient bands have exactly [`Self::coeff_len`]
+    /// samples.
     fn inverse(&self, approx: &[T], detail: &[T]) -> Vec<T> {
         let mut out = vec![T::zero(); self.signal_len()];
         let mut scratch = vec![T::zero(); self.scratch_len()];
@@ -41,9 +55,25 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     }
 
     /// Computes one decomposition level without allocating.
+    ///
+    /// `signal`, `approx`, and `detail` must have exactly the lengths reported
+    /// by [`Self::signal_len`] and [`Self::coeff_len`]. `scratch` may be longer
+    /// than [`Self::scratch_len`] but not shorter.
+    ///
+    /// # Panics
+    ///
+    /// Panics when any buffer violates those length requirements.
     fn forward_into(&self, signal: &[T], approx: &mut [T], detail: &mut [T], scratch: &mut [T]);
 
     /// Reconstructs the plan's original signal length without allocating.
+    ///
+    /// `approx`, `detail`, and `out` must have exactly the lengths reported by
+    /// [`Self::coeff_len`] and [`Self::signal_len`]. `scratch` may be longer
+    /// than [`Self::scratch_len`] but not shorter.
+    ///
+    /// # Panics
+    ///
+    /// Panics when any buffer violates those length requirements.
     fn inverse_into(&self, approx: &[T], detail: &[T], out: &mut [T], scratch: &mut [T]);
 }
 
@@ -63,6 +93,24 @@ struct MultilevelPlanKey {
 }
 
 /// Creates and caches fixed-length discrete wavelet transform plans.
+///
+/// The planner detects the best available safe SIMD backend once. Repeated
+/// requests using the same live [`Wavelet`] and transform configuration share
+/// the cached plan.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use wavelets::{Boundary, DwtPlanner, Wavelet};
+///
+/// let wavelet = Wavelet::haar();
+/// let mut planner = DwtPlanner::<f64>::new();
+/// let first = planner.plan_dwt(128, &wavelet, Boundary::Periodization)?;
+/// let second = planner.plan_dwt(128, &wavelet, Boundary::Periodization)?;
+/// assert!(Arc::ptr_eq(&first, &second));
+/// # Ok::<(), wavelets::WaveletError>(())
+/// ```
 pub struct DwtPlanner<T: WaveletNum> {
     cache: HashMap<PlanKey, Weak<dyn Dwt<T>>>,
     multilevel_cache: HashMap<MultilevelPlanKey, Weak<WavedecPlan<T>>>,
@@ -86,6 +134,12 @@ impl<T: WaveletNum> DwtPlanner<T> {
     /// Planning validates the boundary/length combination and prepares the
     /// edge-extension and polyphase filter layouts. Repeated identical requests
     /// reuse the same live plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::EmptySignal`] for `len == 0`, or
+    /// [`WaveletError::BoundaryRequiresLongerSignal`] when the selected
+    /// extension mode is undefined for `len`.
     pub fn plan_dwt(
         &mut self,
         len: usize,
@@ -112,6 +166,12 @@ impl<T: WaveletNum> DwtPlanner<T> {
     /// Every single-level plan, band offset, and scratch region is prepared up
     /// front. Repeated requests resolving to the same number of levels reuse
     /// the same live plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WaveletError::EmptySignal`] for `len == 0`,
+    /// [`WaveletError::InvalidLevel`] when an exact level exceeds the maximum,
+    /// or a boundary/length planning error at an intermediate level.
     pub fn plan_wavedec(
         &mut self,
         len: usize,

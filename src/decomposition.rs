@@ -53,6 +53,27 @@ impl DecompositionLayout {
 /// addresses detail bands by their natural one-based level. A decomposition
 /// allocated by [`WavedecPlan::allocate_decomposition`] can be overwritten and
 /// reused without allocating.
+///
+/// # Examples
+///
+/// ```
+/// use wavelets::{Boundary, Level, Wavelet, wavedec};
+///
+/// let signal: Vec<f64> = (0..32).map(f64::from).collect();
+/// let wavelet = Wavelet::haar();
+/// let decomposition = wavedec(
+///     &signal,
+///     &wavelet,
+///     Boundary::Symmetric,
+///     Level::Exact(3),
+/// )?;
+///
+/// assert_eq!(decomposition.levels(), 3);
+/// assert_eq!(decomposition.detail(1).len(), 16);
+/// assert_eq!(decomposition.detail(3).len(), 4);
+/// assert_eq!(decomposition.bands().count(), 4);
+/// # Ok::<(), wavelets::WaveletError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Decomposition<T> {
     buffer: Vec<T>,
@@ -125,6 +146,14 @@ impl<T> Decomposition<T> {
     /// Returns the contiguous backing storage in physical band order.
     pub fn as_slice(&self) -> &[T] {
         &self.buffer
+    }
+
+    /// Mutably returns the contiguous backing storage in physical band order.
+    ///
+    /// The layout is `cA_L, cD_L, ..., cD_1`. Prefer [`Self::approx_mut`] and
+    /// [`Self::detail_mut`] when an operation targets a particular band.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.buffer
     }
 
     /// Iterates over coefficient bands in PyWavelets order:
@@ -241,6 +270,10 @@ impl<T: WaveletNum> WavedecPlan<T> {
     }
 
     /// Allocates and computes a multilevel decomposition.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `signal.len()` differs from [`Self::signal_len`].
     pub fn forward(&self, signal: &[T]) -> Decomposition<T> {
         let mut decomposition = self.allocate_decomposition();
         let mut scratch = vec![T::zero(); self.scratch_len()];
@@ -249,6 +282,11 @@ impl<T: WaveletNum> WavedecPlan<T> {
     }
 
     /// Allocates and reconstructs the original signal.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the decomposition's filter bank, boundary mode, band layout,
+    /// or coefficient-buffer length does not match this plan.
     pub fn inverse(&self, decomposition: &Decomposition<T>) -> Vec<T> {
         let mut output = vec![T::zero(); self.signal_len()];
         let mut scratch = vec![T::zero(); self.scratch_len()];
@@ -428,6 +466,17 @@ impl<T: WaveletNum> WavedecPlan<T> {
 
 /// Computes the largest decomposition level with a boundary-independent
 /// coefficient, matching PyWavelets' `dwt_max_level` definition.
+///
+/// A `filter_len` smaller than two has no valid decomposition level and returns
+/// zero.
+///
+/// # Examples
+///
+/// ```
+/// use wavelets::dwt_max_level;
+///
+/// assert_eq!(dwt_max_level(1_000, 8), 7);
+/// ```
 pub fn dwt_max_level(signal_len: usize, filter_len: usize) -> usize {
     if filter_len < 2 {
         return 0;
@@ -456,6 +505,13 @@ pub(crate) fn resolve_levels(
 }
 
 /// Computes a multilevel one-dimensional wavelet decomposition.
+///
+/// `Level::Exact(0)` is an identity decomposition containing only `cA_0`.
+///
+/// # Errors
+///
+/// Returns [`WaveletError::EmptySignal`] for an empty signal or
+/// [`WaveletError::InvalidLevel`] when an exact level exceeds the maximum.
 pub fn wavedec<T: WaveletNum>(
     signal: &[T],
     wavelet: &Wavelet,
@@ -468,6 +524,10 @@ pub fn wavedec<T: WaveletNum>(
 }
 
 /// Reconstructs a signal from a decomposition created by [`wavedec`].
+///
+/// # Errors
+///
+/// Returns an error if the decomposition metadata cannot produce a valid plan.
 pub fn waverec<T: WaveletNum>(dec: &Decomposition<T>) -> Result<Vec<T>, WaveletError> {
     let mut planner = DwtPlanner::<T>::new();
     let plan = planner.plan_wavedec(
@@ -510,5 +570,9 @@ mod tests {
         assert_eq!(bands[1], dec.detail(3));
         assert_eq!(bands[2], dec.detail(2));
         assert_eq!(bands[3], dec.detail(1));
+
+        let mut mutable = dec.clone();
+        mutable.as_mut_slice()[0] = 42.0;
+        assert_eq!(mutable.approx()[0], 42.0);
     }
 }

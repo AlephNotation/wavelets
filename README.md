@@ -19,10 +19,10 @@ slice includes:
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.
 
-Published cross-library benchmark results remain before the first beta.
-
 See [Migrating from PyWavelets](MIGRATING_FROM_PYWAVELETS.md) for the direct
-API mapping and the current compatibility boundary.
+API mapping, repeated-transform pattern, and current compatibility boundary.
+The complete public API documentation is available on
+[docs.rs](https://docs.rs/wavelets).
 
 ## PyWavelets-style API
 

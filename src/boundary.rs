@@ -7,6 +7,17 @@ use crate::WaveletError;
 ///
 /// Names and semantics match PyWavelets. [`Boundary::Symmetric`] is the
 /// conventional default, but callers select a mode explicitly when planning.
+///
+/// # Examples
+///
+/// ```
+/// use wavelets::Boundary;
+///
+/// let boundary: Boundary = "periodization".parse()?;
+/// assert_eq!(boundary, Boundary::Periodization);
+/// assert_eq!(boundary.as_str(), "periodization");
+/// # Ok::<(), wavelets::WaveletError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum Boundary {
