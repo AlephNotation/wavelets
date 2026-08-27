@@ -18,6 +18,16 @@ pub enum WaveletError {
     },
     /// A custom filter bank is structurally invalid.
     InvalidFilterBank(&'static str),
+    /// A boundary mode name is not recognized.
+    UnknownBoundary {
+        /// The unrecognized name.
+        name: String,
+    },
+    /// A wavelet name is not recognized.
+    UnknownWavelet {
+        /// The unrecognized name.
+        name: String,
+    },
     /// The requested built-in wavelet is not available yet.
     UnsupportedWavelet {
         /// The wavelet family name.
@@ -31,6 +41,23 @@ pub enum WaveletError {
         requested: usize,
         /// The maximum supported number of levels.
         maximum: usize,
+    },
+    /// Approximation and detail bands have different lengths.
+    CoefficientLengthMismatch {
+        /// The approximation-band length.
+        approx: usize,
+        /// The detail-band length.
+        detail: usize,
+    },
+    /// A coefficient length cannot describe an inverse transform for the
+    /// selected filter and boundary mode.
+    InvalidCoefficientLength {
+        /// The length of each coefficient band.
+        len: usize,
+        /// The reconstruction filter length.
+        filter_len: usize,
+        /// The boundary mode's stable name.
+        boundary: &'static str,
     },
 }
 
@@ -47,12 +74,26 @@ impl Display for WaveletError {
                 "boundary mode {boundary:?} requires a signal of length at least {minimum}, got {len}"
             ),
             Self::InvalidFilterBank(reason) => write!(f, "invalid filter bank: {reason}"),
+            Self::UnknownBoundary { name } => write!(f, "unknown boundary mode {name:?}"),
+            Self::UnknownWavelet { name } => write!(f, "unknown wavelet {name:?}"),
             Self::UnsupportedWavelet { family, order } => {
                 write!(f, "unsupported {family} wavelet order {order}")
             }
             Self::InvalidLevel { requested, maximum } => write!(
                 f,
                 "decomposition level {requested} exceeds the boundary-safe maximum {maximum}"
+            ),
+            Self::CoefficientLengthMismatch { approx, detail } => write!(
+                f,
+                "approximation and detail lengths differ: {approx} != {detail}"
+            ),
+            Self::InvalidCoefficientLength {
+                len,
+                filter_len,
+                boundary,
+            } => write!(
+                f,
+                "coefficient length {len} is invalid for filter length {filter_len} and boundary mode {boundary:?}"
             ),
         }
     }

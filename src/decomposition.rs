@@ -123,6 +123,13 @@ impl<T> Decomposition<T> {
     pub fn as_slice(&self) -> &[T] {
         &self.buffer
     }
+
+    /// Iterates over coefficient bands in PyWavelets order:
+    /// `cA_L, cD_L, ..., cD_1`.
+    pub fn bands(&self) -> impl Iterator<Item = &[T]> {
+        std::iter::once(self.approx())
+            .chain((0..self.levels()).rev().map(|level| self.detail(level + 1)))
+    }
 }
 
 /// A reusable, fixed-length multilevel DWT/IDWT plan.
@@ -491,5 +498,12 @@ mod tests {
         assert_eq!(dec.detail(2).len(), 4);
         assert_eq!(dec.detail(3).len(), 2);
         assert_eq!(dec.as_slice().len(), 16);
+
+        let bands: Vec<_> = dec.bands().collect();
+        assert_eq!(bands.len(), 4);
+        assert_eq!(bands[0], dec.approx());
+        assert_eq!(bands[1], dec.detail(3));
+        assert_eq!(bands[2], dec.detail(2));
+        assert_eq!(bands[3], dec.detail(1));
     }
 }

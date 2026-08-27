@@ -11,6 +11,7 @@ slice includes:
 - immutable, cheaply cloned filter banks;
 - high-precision, reproducibly generated Haar and `db1..db38` filters;
 - all nine PyWavelets boundary modes;
+- PyWavelets-style `dwt`/`idwt` convenience functions and canonical name parsing;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
 - safe portable SIMD analysis and synthesis with planner-cached runtime dispatch;
 - reusable allocation-free multilevel plans and contiguous decompositions; and
@@ -21,7 +22,28 @@ The remaining built-in families and published cross-library benchmark results
 remain before the first beta.
 
 The implementation invariants and deliberate departures from the initial
-sketch are recorded in [DESIGN.md](DESIGN.md).
+sketch are recorded in [DESIGN.md](DESIGN.md). See
+[Migrating from PyWavelets](MIGRATING_FROM_PYWAVELETS.md) for the direct API
+mapping and the current compatibility boundary.
+
+## PyWavelets-style API
+
+The allocating facade keeps one-off transforms close to their PyWavelets
+equivalents while delegating to the same planned kernels:
+
+```rust
+use wavelets::{Boundary, Wavelet, dwt, idwt};
+
+let signal = [1.0_f64, 2.0, 3.0, 4.0];
+let wavelet: Wavelet = "db2".parse()?;
+let boundary: Boundary = "symmetric".parse()?;
+let (approx, detail) = dwt(&signal, &wavelet, boundary)?;
+let reconstructed = idwt(&approx, &detail, &wavelet, boundary)?;
+
+# Ok::<(), wavelets::WaveletError>(())
+```
+
+Move to `DwtPlanner` when the signal length and transform configuration repeat.
 
 ## Fuzzing
 

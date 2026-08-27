@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use wavelets::{Boundary, DwtPlanner, Level, Wavelet, wavedec, waverec};
+use wavelets::{Boundary, DwtPlanner, Level, Wavelet, dwt, idwt, wavedec, waverec};
 
 const DB2_LEN4: &[(Boundary, [f64; 3], [f64; 3])] = &[
     (
@@ -196,6 +196,7 @@ fn generated_fixture_matrix_matches_pywavelets() {
         let signal = &signals[&case.len];
         let plan = planner.plan_dwt(case.len, &wavelet, boundary).unwrap();
         let (approx, detail) = plan.forward(signal);
+        let (functional_approx, functional_detail) = dwt(signal, &wavelet, boundary).unwrap();
         let context = format!("{} {} len={}", case.wavelet, case.mode, case.len);
         let reference_tolerance = reference_tolerance(&wavelet, boundary, signal);
         assert_slice_close_with_tolerance(
@@ -212,10 +213,26 @@ fn generated_fixture_matrix_matches_pywavelets() {
             &context,
             reference_tolerance,
         );
+        assert_eq!(functional_approx, approx, "functional approx: {context}");
+        assert_eq!(functional_detail, detail, "functional detail: {context}");
         let reconstruction_tolerance =
             1.0e-12 * signal.iter().copied().map(f64::abs).fold(1.0, f64::max);
         assert_slice_close_with_tolerance(
             &plan.inverse(&approx, &detail),
+            signal,
+            boundary,
+            &context,
+            reconstruction_tolerance,
+        );
+        let functional_reconstruction =
+            idwt(&functional_approx, &functional_detail, &wavelet, boundary).unwrap();
+        assert_eq!(
+            functional_reconstruction.len(),
+            case.len.next_multiple_of(2),
+            "functional reconstruction length: {context}"
+        );
+        assert_slice_close_with_tolerance(
+            &functional_reconstruction[..case.len],
             signal,
             boundary,
             &context,
@@ -245,22 +262,8 @@ fn multilevel_fixture_matrix_matches_pywavelets() {
 
         let tolerance =
             multilevel_reference_tolerance(&wavelet, boundary, signal, decomposition.levels());
-        assert_slice_close_with_tolerance(
-            decomposition.approx(),
-            &case.bands[0],
-            boundary,
-            &context,
-            tolerance,
-        );
-        for (band_index, expected) in case.bands.iter().skip(1).enumerate() {
-            let level = decomposition.levels() - band_index;
-            assert_slice_close_with_tolerance(
-                decomposition.detail(level),
-                expected,
-                boundary,
-                &context,
-                tolerance,
-            );
+        for (actual, expected) in decomposition.bands().zip(&case.bands) {
+            assert_slice_close_with_tolerance(actual, expected, boundary, &context, tolerance);
         }
 
         let reconstruction_tolerance =
@@ -276,31 +279,11 @@ fn multilevel_fixture_matrix_matches_pywavelets() {
 }
 
 fn fixture_wavelet(name: &str) -> Wavelet {
-    match name {
-        "haar" => Wavelet::haar(),
-        name => Wavelet::daubechies(
-            name.strip_prefix("db")
-                .unwrap_or_else(|| panic!("unknown fixture wavelet {name}"))
-                .parse()
-                .unwrap(),
-        )
-        .unwrap(),
-    }
+    name.parse().unwrap()
 }
 
 fn fixture_boundary(mode: &str) -> Boundary {
-    match mode {
-        "zero" => Boundary::Zero,
-        "constant" => Boundary::Constant,
-        "symmetric" => Boundary::Symmetric,
-        "reflect" => Boundary::Reflect,
-        "periodic" => Boundary::Periodic,
-        "smooth" => Boundary::Smooth,
-        "antisymmetric" => Boundary::Antisymmetric,
-        "antireflect" => Boundary::Antireflect,
-        "periodization" => Boundary::Periodization,
-        unknown => panic!("unknown fixture boundary {unknown}"),
-    }
+    mode.parse().unwrap()
 }
 
 fn assert_slice_close(actual: &[f64], expected: &[f64], boundary: Boundary) {

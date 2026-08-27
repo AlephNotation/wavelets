@@ -14,6 +14,7 @@ mod error;
 mod num;
 mod plan;
 mod simd;
+mod transform;
 mod wavelet;
 
 pub use boundary::Boundary;
@@ -21,4 +22,5 @@ pub use decomposition::{Decomposition, Level, WavedecPlan, dwt_max_level, wavede
 pub use error::WaveletError;
 pub use num::WaveletNum;
 pub use plan::{Dwt, DwtPlanner};
+pub use transform::{dwt, idwt};
 pub use wavelet::{Wavelet, WaveletFamily};

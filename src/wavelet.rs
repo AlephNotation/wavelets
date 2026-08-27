@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -56,6 +57,34 @@ impl Wavelet {
             1,
             coefficients::daubechies(1).expect("generated db1 coefficients are present"),
         )
+    }
+
+    /// Constructs a built-in wavelet from its canonical PyWavelets name.
+    ///
+    /// Names for families that are recognized but not implemented return
+    /// [`WaveletError::UnsupportedWavelet`].
+    pub fn from_name(name: &str) -> Result<Self, WaveletError> {
+        if name == "haar" {
+            return Ok(Self::haar());
+        }
+        if let Some(order) = parse_integer_name(name, "db") {
+            return Self::daubechies(order);
+        }
+        if let Some(order) = parse_integer_name(name, "sym") {
+            return Self::symlet(order);
+        }
+        if let Some(order) = parse_integer_name(name, "coif") {
+            return Self::coiflet(order);
+        }
+        if let Some((reconstruction, decomposition)) = parse_pair_name(name, "bior") {
+            return Self::biorthogonal(reconstruction, decomposition);
+        }
+        if let Some((reconstruction, decomposition)) = parse_pair_name(name, "rbio") {
+            return Self::reverse_biorthogonal(reconstruction, decomposition);
+        }
+        Err(WaveletError::UnknownWavelet {
+            name: name.to_owned(),
+        })
     }
 
     /// Constructs a Daubechies wavelet.
@@ -289,6 +318,35 @@ impl Wavelet {
     }
 }
 
+impl FromStr for Wavelet {
+    type Err = WaveletError;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::from_name(name)
+    }
+}
+
+fn parse_integer_name(name: &str, prefix: &str) -> Option<usize> {
+    let digits = name.strip_prefix(prefix)?;
+    if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn parse_pair_name(name: &str, prefix: &str) -> Option<(usize, usize)> {
+    let pair = name.strip_prefix(prefix)?;
+    let (first, second) = pair.split_once('.')?;
+    if first.is_empty()
+        || second.is_empty()
+        || (first.len() > 1 && first.starts_with('0'))
+        || (second.len() > 1 && second.starts_with('0'))
+    {
+        return None;
+    }
+    Some((first.parse().ok()?, second.parse().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +363,25 @@ mod tests {
         for (actual, expected) in wavelet.dec_lo().iter().zip(expected) {
             assert!((actual - expected).abs() <= f64::EPSILON);
         }
+    }
+
+    #[test]
+    fn canonical_names_construct_or_identify_unimplemented_families() {
+        assert_eq!(Wavelet::from_name("haar").unwrap().name(), "haar");
+        assert_eq!("db4".parse::<Wavelet>().unwrap().name(), "db4");
+        assert!(matches!(
+            Wavelet::from_name("sym4"),
+            Err(WaveletError::UnsupportedWavelet {
+                family: "Symlet",
+                ..
+            })
+        ));
+        assert_eq!(
+            Wavelet::from_name("db04").unwrap_err(),
+            WaveletError::UnknownWavelet {
+                name: "db04".to_owned()
+            }
+        );
     }
 
     #[test]

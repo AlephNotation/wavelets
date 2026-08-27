@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use wavelets::{Boundary, DwtPlanner, Level, WaveletNum};
+use wavelets::{Boundary, DwtPlanner, Level, WaveletNum, dwt, idwt, wavedec, waverec};
 use wavelets_benchmarks::{Case, representative_cases, signal, wavelet};
 
 fn criterion_config() -> Criterion {
@@ -127,11 +127,50 @@ fn benchmark_allocating<T: WaveletNum>(criterion: &mut Criterion, precision: &st
     group.bench_function("single_inverse/db4/symmetric/4096", |bencher| {
         bencher.iter(|| black_box(single.inverse(black_box(&approx), black_box(&detail))));
     });
+    group.bench_function("functional_dwt/db4/symmetric/4096", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                dwt(black_box(&signal), &wavelet, Boundary::Symmetric)
+                    .expect("benchmark case is valid"),
+            )
+        });
+    });
+    group.bench_function("functional_idwt/db4/symmetric/4096", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                idwt(
+                    black_box(&approx),
+                    black_box(&detail),
+                    &wavelet,
+                    Boundary::Symmetric,
+                )
+                .expect("benchmark case is valid"),
+            )
+        });
+    });
     group.bench_function("multilevel_forward/db4/symmetric/4096", |bencher| {
         bencher.iter(|| black_box(multilevel.forward(black_box(&signal))));
     });
     group.bench_function("multilevel_inverse/db4/symmetric/4096", |bencher| {
         bencher.iter(|| black_box(multilevel.inverse(black_box(&decomposition))));
+    });
+    group.bench_function("functional_wavedec/db4/symmetric/4096", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                wavedec(
+                    black_box(&signal),
+                    &wavelet,
+                    Boundary::Symmetric,
+                    Level::Max,
+                )
+                .expect("benchmark case is valid"),
+            )
+        });
+    });
+    group.bench_function("functional_waverec/db4/symmetric/4096", |bencher| {
+        bencher.iter(|| {
+            black_box(waverec(black_box(&decomposition)).expect("benchmark case is valid"))
+        });
     });
     group.finish();
 }
