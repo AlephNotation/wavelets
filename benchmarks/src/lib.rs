@@ -1,7 +1,7 @@
 use wavelets::{Boundary, Wavelet, WaveletNum};
 
 pub const SIGNAL_LENGTHS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
-pub const FILTER_WAVELETS: [&str; 5] = ["db1", "db4", "db20", "db38", "sym4"];
+pub const FILTER_WAVELETS: [&str; 6] = ["db1", "db4", "db20", "db38", "sym4", "coif3"];
 pub const BOUNDARIES: [(&str, Boundary); 9] = [
     ("zero", Boundary::Zero),
     ("constant", Boundary::Constant),

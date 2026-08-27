@@ -10,9 +10,7 @@ from pathlib import Path
 
 import mpmath as mp
 import pywt
-
-from generate_builtin_coefficients import daubechies, symlet
-
+from generate_builtin_coefficients import coiflet, daubechies, symlet
 
 SINGLE_LEVEL_LENGTHS = [*range(1, 17), 17, 31, 100, 101]
 MULTILEVEL_LENGTHS = [31, 100, 101, 1000]
@@ -20,6 +18,7 @@ WAVELET_NAMES = [
     "haar",
     *(f"db{order}" for order in range(1, 39)),
     *(f"sym{order}" for order in range(2, 21)),
+    *(f"coif{order}" for order in range(1, 18)),
 ]
 
 
@@ -34,6 +33,8 @@ def authored_dec_lo(name: str) -> list[float]:
         coefficients = daubechies(int(name.removeprefix("db")))
     elif name.startswith("sym"):
         coefficients = symlet(int(name.removeprefix("sym")))
+    elif name.startswith("coif"):
+        coefficients = coiflet(int(name.removeprefix("coif")))
     else:
         raise ValueError(f"unsupported fixture wavelet {name}")
     return [float(value) for value in coefficients]

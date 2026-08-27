@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Author exact binary64 built-in coefficients by spectral factorization."""
+"""Author exact binary64 built-in coefficients from high-precision constructions."""
 
 from __future__ import annotations
 
 import argparse
 import math
-from pathlib import Path
 import struct
+from pathlib import Path
 
 import mpmath as mp
-
 
 OUTPUT = Path("src/coefficients.rs")
 
@@ -93,7 +92,7 @@ def root_groups(roots_y: list[mp.mpc]) -> list[tuple[mp.mpc, bool]]:
     """Group real roots and one representative from each conjugate pair."""
     tolerance = mp.mpf("1e-70")
     real_roots = sorted(
-        (mp.re(root) for root in roots_y if abs(mp.im(root)) <= tolerance)
+        mp.re(root) for root in roots_y if abs(mp.im(root)) <= tolerance
     )
     positive_roots = sorted(
         (root for root in roots_y if mp.im(root) > tolerance),
@@ -103,7 +102,10 @@ def root_groups(roots_y: list[mp.mpc]) -> list[tuple[mp.mpc, bool]]:
     if len(positive_roots) != len(negative_roots):
         raise ArithmeticError("auxiliary roots did not form conjugate pairs")
     for root in positive_roots:
-        if min(abs(mp.conj(root) - candidate) for candidate in negative_roots) > tolerance:
+        if (
+            min(abs(mp.conj(root) - candidate) for candidate in negative_roots)
+            > tolerance
+        ):
             raise ArithmeticError("auxiliary roots did not form conjugate pairs")
     return [(mp.mpc(root), False) for root in real_roots] + [
         (root, True) for root in positive_roots
@@ -142,8 +144,7 @@ def spectral_factor(order: int, selections: str, label: str) -> list[mp.mpf]:
     maximum_imaginary = max(abs(mp.im(value)) for value in coefficients)
     if maximum_imaginary > mp.mpf("1e-70"):
         raise ArithmeticError(
-            f"{label} spectral factor retained imaginary residue "
-            f"{maximum_imaginary}"
+            f"{label} spectral factor retained imaginary residue {maximum_imaginary}"
         )
     real_coefficients = [mp.re(value) for value in coefficients]
     scale = mp.sqrt(2) / mp.fsum(real_coefficients)
@@ -165,10 +166,218 @@ def symlet(order: int) -> list[mp.mpf]:
     return spectral_factor(order, selections, f"sym{order}")
 
 
+def add_polynomials(
+    left: dict[int, mp.mpf], right: dict[int, mp.mpf]
+) -> dict[int, mp.mpf]:
+    result = left.copy()
+    for exponent, coefficient in right.items():
+        result[exponent] = result.get(exponent, mp.mpf(0)) + coefficient
+    return result
+
+
+def multiply_polynomials(
+    left: dict[int, mp.mpf], right: dict[int, mp.mpf]
+) -> dict[int, mp.mpf]:
+    result: dict[int, mp.mpf] = {}
+    for left_exponent, left_coefficient in left.items():
+        for right_exponent, right_coefficient in right.items():
+            exponent = left_exponent + right_exponent
+            result[exponent] = (
+                result.get(exponent, mp.mpf(0)) + left_coefficient * right_coefficient
+            )
+    return result
+
+
+def coiflet_raw_coefficients(order: int, unknowns: tuple[mp.mpf, ...]) -> list[mp.mpf]:
+    """Construct the normalized Laurent coefficients for one Newton iterate."""
+    if len(unknowns) != order:
+        raise ValueError(f"coif{order} needs {order} Newton unknowns")
+
+    # Equations (4.7) and (4.12)-(4.14) of Daubechies, "Orthonormal
+    # Bases of Compactly Supported Wavelets II" (1993), DOI
+    # 10.1137/0524031. The first half of g is exact; the second half is the
+    # square quadratic system's unknown vector.
+    g = [
+        2 * mp.mpf(math.comb(2 * order - 1 + index, order + index))
+        for index in range(order)
+    ] + list(unknowns)
+    f = []
+    for index in range(2 * order):
+        if index == 0:
+            value = (
+                mp.fsum(
+                    mp.mpf(math.comb(2 * degree, degree))
+                    * mp.power(4, -degree)
+                    * g[degree]
+                    for degree in range(2 * order)
+                )
+                / 2
+            )
+        else:
+            value = (-1) ** index * mp.fsum(
+                mp.mpf(math.comb(2 * degree, degree - index))
+                * mp.power(4, -degree)
+                * g[degree]
+                for degree in range(index, 2 * order)
+            )
+        f.append(value)
+
+    quarter = mp.mpf(1) / 4
+    cosine_squared = {-1: quarter, 0: 2 * quarter, 1: quarter}
+    sine_squared = {-1: -quarter, 0: 2 * quarter, 1: -quarter}
+    cosine_power = {0: mp.mpf(1)}
+    sine_power = {0: mp.mpf(1)}
+    bracket: dict[int, mp.mpf] = {}
+    for degree in range(order):
+        multiplier = mp.mpf(math.comb(order - 1 + degree, degree))
+        bracket = add_polynomials(
+            bracket,
+            {
+                exponent: multiplier * coefficient
+                for exponent, coefficient in sine_power.items()
+            },
+        )
+        cosine_power = multiply_polynomials(cosine_power, cosine_squared)
+        sine_power = multiply_polynomials(sine_power, sine_squared)
+
+    bracket = add_polynomials(
+        bracket,
+        multiply_polynomials(
+            sine_power,
+            {exponent: coefficient for exponent, coefficient in enumerate(f)},
+        ),
+    )
+    polynomial = multiply_polynomials(cosine_power, bracket)
+    return [
+        polynomial.get(exponent, mp.mpf(0)) for exponent in range(-2 * order, 4 * order)
+    ]
+
+
+def coiflet_affine_filter(
+    order: int,
+) -> tuple[list[mp.mpf], list[list[mp.mpf]]]:
+    zero = tuple(mp.mpf(0) for _ in range(order))
+    base = coiflet_raw_coefficients(order, zero)
+    basis = []
+    for index in range(order):
+        unit = list(zero)
+        unit[index] = mp.mpf(1)
+        basis.append(
+            [
+                coefficient - base_coefficient
+                for coefficient, base_coefficient in zip(
+                    coiflet_raw_coefficients(order, tuple(unit)), base, strict=True
+                )
+            ]
+        )
+    return base, basis
+
+
+def solve_coiflet_stage(
+    order: int, start: tuple[mp.mpf, ...], tolerance: mp.mpf
+) -> tuple[mp.mpf, ...]:
+    """Apply Newton's method to the independent high-lag QMF equations."""
+    base, basis = coiflet_affine_filter(order)
+    length = len(base)
+    unknowns = mp.matrix(start)
+
+    for _ in range(64):
+        coefficients = [
+            base[index]
+            + mp.fsum(
+                unknowns[column] * basis[column][index] for column in range(order)
+            )
+            for index in range(length)
+        ]
+        residuals = []
+        jacobian = []
+        for shift in range(2 * order, 3 * order):
+            lag = 2 * shift
+            residuals.append(
+                2
+                * mp.fsum(
+                    coefficients[index] * coefficients[index + lag]
+                    for index in range(length - lag)
+                )
+            )
+            jacobian.append(
+                [
+                    2
+                    * mp.fsum(
+                        basis[column][index] * coefficients[index + lag]
+                        + coefficients[index] * basis[column][index + lag]
+                        for index in range(length - lag)
+                    )
+                    for column in range(order)
+                ]
+            )
+
+        if max(abs(residual) for residual in residuals) <= tolerance:
+            return tuple(unknowns)
+        unknowns += mp.lu_solve(mp.matrix(jacobian), -mp.matrix(residuals))
+
+    raise ArithmeticError(f"coif{order} Newton iteration did not converge")
+
+
+def coiflet(order: int) -> list[mp.mpf]:
+    """Return the canonical Coiflet low-pass filter in PyWavelets order."""
+    if not 1 <= order <= 17:
+        raise ValueError(f"unsupported Coiflet order {order}")
+
+    # Daubechies specifies Newton iteration from the exact zero vector. Staged
+    # precision makes that deterministic path well-conditioned through coif17.
+    unknowns = tuple(mp.mpf(0) for _ in range(order))
+    for precision, tolerance in ((60, "1e-35"), (110, "1e-75"), (180, "1e-130")):
+        with mp.workdps(precision):
+            unknowns = solve_coiflet_stage(order, unknowns, mp.mpf(tolerance))
+
+    with mp.workdps(180):
+        coefficients = [
+            mp.sqrt(2) * coefficient
+            for coefficient in reversed(coiflet_raw_coefficients(order, unknowns))
+        ]
+        qmf_error = max(
+            abs(
+                mp.fsum(
+                    coefficients[index] * coefficients[index + 2 * shift]
+                    for index in range(len(coefficients) - 2 * shift)
+                )
+                - (1 if shift == 0 else 0)
+            )
+            for shift in range(3 * order)
+        )
+        alternating_moment_error = max(
+            abs(
+                mp.fsum(
+                    (-1) ** index * mp.power(index, degree) * coefficient
+                    for index, coefficient in enumerate(coefficients)
+                )
+            )
+            for degree in range(2 * order)
+        )
+        shift = 4 * order - 1
+        scaling_moment_error = max(
+            abs(
+                mp.fsum(
+                    mp.power(index - shift, degree) * coefficient
+                    for index, coefficient in enumerate(coefficients)
+                )
+            )
+            for degree in range(1, 2 * order)
+        )
+        maximum_error = max(qmf_error, alternating_moment_error, scaling_moment_error)
+        if maximum_error > mp.mpf("1e-100"):
+            raise ArithmeticError(
+                f"coif{order} construction residual {maximum_error} is too large"
+            )
+        return coefficients
+
+
 def render() -> str:
     mp.mp.dps = 100
     daubechies_filters = {order: daubechies(order) for order in range(1, 39)}
     symlet_filters = {order: symlet(order) for order in range(2, 21)}
+    coiflet_filters = {order: coiflet(order) for order in range(1, 18)}
 
     lines = [
         "// @generated by tools/generate_builtin_coefficients.py; do not edit by hand.",
@@ -179,6 +388,9 @@ def render() -> str:
         lines.append("")
     for order, coefficients in symlet_filters.items():
         lines.extend(render_array(f"SYM{order}_DEC_LO", coefficients))
+        lines.append("")
+    for order, coefficients in coiflet_filters.items():
+        lines.extend(render_array(f"COIF{order}_DEC_LO", coefficients))
         lines.append("")
     lines.extend(
         [
@@ -194,7 +406,20 @@ def render() -> str:
             "",
             "pub(crate) fn symlet(order: usize) -> Option<&'static [f64]> {",
             "    match order {",
-            *(f"        {order} => Some(&SYM{order}_DEC_LO)," for order in symlet_filters),
+            *(
+                f"        {order} => Some(&SYM{order}_DEC_LO),"
+                for order in symlet_filters
+            ),
+            "        _ => None,",
+            "    }",
+            "}",
+            "",
+            "pub(crate) fn coiflet(order: usize) -> Option<&'static [f64]> {",
+            "    match order {",
+            *(
+                f"        {order} => Some(&COIF{order}_DEC_LO),"
+                for order in coiflet_filters
+            ),
             "        _ => None,",
             "    }",
             "}",

@@ -32,8 +32,9 @@ cargo bench --manifest-path benchmarks/Cargo.toml --bench throughput -- db4/symm
 
 The throughput suite covers `f32` and `f64`, forward and inverse transforms,
 allocation-free and allocating APIs, representative signal lengths,
-Daubechies and Symlet filters, all boundary modes, and multilevel transforms. Planning has its own
-suite so setup cost is not mixed into execution cost.
+Daubechies, Symlet, and Coiflet filters, all boundary modes, and multilevel
+transforms. Planning has its own suite so setup cost is not mixed into execution
+cost.
 
 ## Hotpath
 

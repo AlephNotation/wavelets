@@ -29,12 +29,16 @@ impl TransformCase {
 fn built_in_wavelet(selector: u8) -> Wavelet {
     const DAUBECHIES_COUNT: usize = 38;
     const SYMLET_COUNT: usize = 19;
+    const COIFLET_COUNT: usize = 17;
 
-    let index = usize::from(selector) % (DAUBECHIES_COUNT + SYMLET_COUNT);
+    let index = usize::from(selector) % (DAUBECHIES_COUNT + SYMLET_COUNT + COIFLET_COUNT);
     if index < DAUBECHIES_COUNT {
         Wavelet::daubechies(index + 1).expect("normalized Daubechies order is supported")
-    } else {
+    } else if index < DAUBECHIES_COUNT + SYMLET_COUNT {
         Wavelet::symlet(index - DAUBECHIES_COUNT + 2).expect("normalized Symlet order is supported")
+    } else {
+        Wavelet::coiflet(index - DAUBECHIES_COUNT - SYMLET_COUNT + 1)
+            .expect("normalized Coiflet order is supported")
     }
 }
 

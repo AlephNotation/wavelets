@@ -31,6 +31,7 @@ fn orthogonal_wavelets() -> Vec<Wavelet> {
     (1..=38)
         .map(|order| Wavelet::daubechies(order).unwrap())
         .chain((2..=20).map(|order| Wavelet::symlet(order).unwrap()))
+        .chain((1..=17).map(|order| Wavelet::coiflet(order).unwrap()))
         .collect()
 }
 

@@ -10,6 +10,7 @@ The API is Rust-native rather than Python source-compatible.
 | --- | --- |
 | `pywt.Wavelet("db4")` | `"db4".parse::<Wavelet>()?` |
 | `pywt.Wavelet("sym4")` | `Wavelet::symlet(4)?` |
+| `pywt.Wavelet("coif4")` | `Wavelet::coiflet(4)?` |
 | mode `"symmetric"` | `"symmetric".parse::<Boundary>()?` or `Boundary::Symmetric` |
 | `pywt.dwt(x, wavelet, mode)` | `dwt(&x, &wavelet, boundary)?` |
 | `pywt.idwt(c_a, c_d, wavelet, mode)` | `idwt(&c_a, &c_d, &wavelet, boundary)?` |
@@ -51,8 +52,8 @@ returns exactly that length. `Decomposition` retains the same information for
 ## Current boundary
 
 The compatible subset currently covers one-dimensional `f32` and `f64`
-transforms, Haar, `db1..db38`, `sym2..sym20`, custom filter banks, and all nine
-extension modes. Coiflets, biorthogonal families, complex values,
+transforms, Haar, `db1..db38`, `sym2..sym20`, `coif1..coif17`, custom filter
+banks, and all nine extension modes. Biorthogonal families, complex values,
 multidimensional axes, omitted single-level coefficient bands, and PyWavelets'
 other transform families are not implemented yet.
 

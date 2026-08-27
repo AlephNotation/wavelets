@@ -124,11 +124,22 @@ impl Wavelet {
     }
 
     /// Constructs a Coiflet wavelet.
+    ///
+    /// Orders `coif1` through `coif17` are available. A Coiflet of order `n`
+    /// has `2 * n` vanishing wavelet moments.
     pub fn coiflet(n: usize) -> Result<Self, WaveletError> {
-        Err(WaveletError::UnsupportedWavelet {
-            family: "Coiflet",
-            order: n.to_string(),
-        })
+        let Some(dec_lo) = coefficients::coiflet(n) else {
+            return Err(WaveletError::UnsupportedWavelet {
+                family: "Coiflet",
+                order: n.to_string(),
+            });
+        };
+        Ok(Self::orthogonal_from_low_pass(
+            &format!("coif{n}"),
+            WaveletFamily::Coiflet,
+            2 * n,
+            dec_lo,
+        ))
     }
 
     /// Constructs a biorthogonal wavelet identified by reconstruction and
@@ -380,6 +391,7 @@ mod tests {
         assert_eq!(Wavelet::from_name("haar").unwrap().name(), "haar");
         assert_eq!("db4".parse::<Wavelet>().unwrap().name(), "db4");
         assert_eq!(Wavelet::from_name("sym4").unwrap().name(), "sym4");
+        assert_eq!(Wavelet::from_name("coif4").unwrap().name(), "coif4");
         assert_eq!(
             Wavelet::from_name("db04").unwrap_err(),
             WaveletError::UnknownWavelet {
@@ -412,6 +424,20 @@ mod tests {
         }
         assert!(Wavelet::symlet(1).is_err());
         assert!(Wavelet::symlet(21).is_err());
+    }
+
+    #[test]
+    fn all_coiflet_orders_are_available() {
+        for order in 1..=17 {
+            let wavelet = Wavelet::coiflet(order).unwrap();
+            assert_eq!(wavelet.name(), format!("coif{order}"));
+            assert_eq!(wavelet.family(), WaveletFamily::Coiflet);
+            assert_eq!(wavelet.filter_len(), 6 * order);
+            assert_eq!(wavelet.vanishing_moments(), Some(2 * order));
+            assert!(wavelet.is_orthogonal());
+        }
+        assert!(Wavelet::coiflet(0).is_err());
+        assert!(Wavelet::coiflet(18).is_err());
     }
 
     #[test]
