@@ -127,6 +127,8 @@ every timing sample.
 The Python binding comparison imports both `wavelets_rs` and PyWavelets into
 the same CPython interpreter and passes the same NumPy inputs to each. This
 removes the language-boundary asymmetry from the native comparison above.
+Its canonical matrix includes db38/coif17 boundary-stress cases at lengths 16
+and 4,096 so long-filter edge execution remains visible in published results.
 
 Create the development environment and build the extension from the repository
 root:

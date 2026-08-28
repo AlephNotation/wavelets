@@ -177,6 +177,11 @@ def canonical_cases() -> list[dict[str, Any]]:
         add("single_level", "f64", "db4", boundary, 4_096)
     for boundary in ("symmetric", "periodization"):
         add("single_level", "f64", "db4", boundary, 101)
+    for wavelet in ("db38", "coif17"):
+        for boundary in ("symmetric", "antireflect"):
+            for length in (16, 4_096):
+                add("single_level", "f64", wavelet, boundary, length)
+            add("multilevel", "f64", wavelet, boundary, 4_096)
     for dtype in ("f32", "f64"):
         for boundary in ("symmetric", "periodization"):
             add("multilevel", dtype, "db4", boundary, 4_096)
