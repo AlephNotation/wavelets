@@ -15,7 +15,7 @@ backend. Both reports use Rust 1.98's release profile with no additional
 ### Same-interpreter Python API
 
 This report was generated from clean commit
-`52a7ed1e4479ab75abf54a848f448dbf60b5ed4c`. Both implementations run in the
+`0fe0934152dc1b169ef8fa3d020c28ce79b8d483`. Both implementations run in the
 same CPython interpreter and receive the same NumPy inputs. The `planned` path
 reuses a `wavelets-rs` plan. The deliberately conservative `cold` path creates
 the canonical wavelet and plan inside every call, while PyWavelets receives a
@@ -26,20 +26,41 @@ Signal length 4,096, db4, symmetric extension:
 
 | Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| f64 | single forward | 2.79 us | 4.40 us | 9.86 us | 3.54x | 2.24x |
-| f64 | single inverse | 2.60 us | 4.16 us | 6.32 us | 2.43x | 1.52x |
-| f64 | multilevel forward | 7.52 us | 11.13 us | 31.19 us | 4.15x | 2.80x |
-| f64 | multilevel inverse | 6.17 us | 9.67 us | 21.43 us | 3.48x | 2.22x |
-| f32 | single forward | 1.60 us | 3.09 us | 9.48 us | 5.91x | 3.07x |
-| f32 | single inverse | 1.42 us | 2.96 us | 6.23 us | 4.39x | 2.11x |
-| f32 | multilevel forward | 4.52 us | 7.74 us | 30.93 us | 6.84x | 4.00x |
-| f32 | multilevel inverse | 3.67 us | 6.90 us | 21.84 us | 5.94x | 3.16x |
+| f64 | single forward | 2.85 us | 5.40 us | 10.37 us | 3.63x | 1.92x |
+| f64 | single inverse | 2.67 us | 4.99 us | 6.44 us | 2.41x | 1.29x |
+| f64 | multilevel forward | 7.18 us | 16.16 us | 31.57 us | 4.40x | 1.95x |
+| f64 | multilevel inverse | 6.45 us | 15.61 us | 21.83 us | 3.38x | 1.40x |
+| f32 | single forward | 1.61 us | 3.81 us | 9.77 us | 6.06x | 2.56x |
+| f32 | single inverse | 1.51 us | 3.76 us | 6.51 us | 4.30x | 1.73x |
+| f32 | multilevel forward | 4.05 us | 12.55 us | 31.48 us | 7.77x | 2.51x |
+| f32 | multilevel inverse | 3.78 us | 12.41 us | 22.72 us | 6.02x | 1.83x |
 
-The planned binding wins all 70 canonical cases, ranging from 1.77x to 8.42x
-with a 3.54x median. The cold path wins 64 of 70, ranging from 0.86x to 4.73x
-with a 2.14x median. Its six losses are short f64 single-level transforms of at
-most 256 samples. Complete environment metadata, checksums, batch sizes, and
-all 4,200 raw timing samples are in
+The planned binding wins all 92 canonical cases, ranging from 1.78x to 10.77x
+with a 3.63x median. The cold path wins 69 of 92, ranging from 0.03x to 4.50x
+with a 1.40x median. Its losses expose the intended plan-once tradeoff: filter
+construction and boundary-row compilation can dominate execution for short or
+long-filter transforms.
+
+#### Long-filter boundary stress
+
+These f64 forward cases exercise the filters and boundaries most affected by
+compiled sparse edge rows:
+
+| Wavelet | Length | Boundary | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| db38 | 16 | symmetric | 574 ns | 14.05 us | 3.74 us | 6.51x |
+| db38 | 16 | antireflect | 559 ns | 23.88 us | 4.16 us | 7.44x |
+| coif17 | 16 | symmetric | 637 ns | 22.11 us | 5.88 us | 9.23x |
+| coif17 | 16 | antireflect | 622 ns | 40.82 us | 6.70 us | 10.77x |
+| db38 | 4,096 | symmetric | 19.84 us | 42.03 us | 129.29 us | 6.52x |
+| db38 | 4,096 | antireflect | 19.14 us | 45.25 us | 122.39 us | 6.39x |
+| coif17 | 4,096 | symmetric | 27.21 us | 65.25 us | 205.93 us | 7.57x |
+| coif17 | 4,096 | antireflect | 27.77 us | 74.20 us | 206.92 us | 7.45x |
+
+At length 4,096, planned multilevel forward transforms range from 5.85x to
+6.63x faster than PyWavelets across the same wavelets and boundaries. Complete
+environment metadata, checksums, batch sizes, and all 5,520 raw timing samples
+are in
 [apple-m4-max-python-api.json](apple-m4-max-python-api.json).
 
 ### Native Rust API
