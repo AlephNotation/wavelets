@@ -151,6 +151,39 @@ fn benchmark_multilevel<T: WaveletNum>(criterion: &mut Criterion, precision: &st
     group.finish();
 }
 
+fn benchmark_multilevel_haar_lengths<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
+    let mut group = criterion.benchmark_group(format!("multilevel_haar/{precision}"));
+    let wavelet = wavelet("db1");
+
+    for len in [4, 16, 64, 256, 1_024, 16_384] {
+        let mut planner = DwtPlanner::<T>::new();
+        let plan = planner
+            .plan_wavedec(len, &wavelet, Boundary::Symmetric, Level::Max)
+            .expect("benchmark case is valid");
+        let signal = signal::<T>(len);
+        let mut decomposition = plan.allocate_decomposition();
+        let mut reconstructed = vec![T::zero(); len];
+        let mut scratch = vec![T::zero(); plan.scratch_len()];
+
+        plan.forward_into(&signal, &mut decomposition, &mut scratch);
+        group.throughput(Throughput::Elements(len as u64));
+        group.bench_function(format!("forward/symmetric/{len}"), |bencher| {
+            bencher.iter(|| {
+                plan.forward_into(black_box(&signal), &mut decomposition, &mut scratch);
+                black_box(decomposition.as_slice());
+            });
+        });
+        group.bench_function(format!("inverse/symmetric/{len}"), |bencher| {
+            bencher.iter(|| {
+                plan.inverse_into(black_box(&decomposition), &mut reconstructed, &mut scratch);
+                black_box(&reconstructed);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn benchmark_allocating<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
     const LENGTH: usize = 4_096;
 
@@ -229,6 +262,8 @@ fn throughput(criterion: &mut Criterion) {
     benchmark_boundary_stress::<f64>(criterion, "f64");
     benchmark_multilevel::<f32>(criterion, "f32");
     benchmark_multilevel::<f64>(criterion, "f64");
+    benchmark_multilevel_haar_lengths::<f32>(criterion, "f32");
+    benchmark_multilevel_haar_lengths::<f64>(criterion, "f64");
     benchmark_allocating::<f32>(criterion, "f32");
     benchmark_allocating::<f64>(criterion, "f64");
 }
