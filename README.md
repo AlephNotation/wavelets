@@ -109,34 +109,38 @@ extension:
 
 | Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| f64 | single forward | 2.86 us | 5.36 us | 10.44 us | 3.64x | 1.95x |
-| f64 | single inverse | 2.66 us | 4.99 us | 6.47 us | 2.43x | 1.30x |
-| f64 | multilevel forward | 7.63 us | 17.08 us | 33.38 us | 4.38x | 1.95x |
-| f64 | multilevel inverse | 6.51 us | 15.79 us | 22.32 us | 3.43x | 1.41x |
-| f32 | single forward | 1.62 us | 3.84 us | 9.73 us | 5.99x | 2.53x |
-| f32 | single inverse | 1.50 us | 3.72 us | 6.41 us | 4.27x | 1.73x |
-| f32 | multilevel forward | 4.26 us | 13.03 us | 32.98 us | 7.75x | 2.53x |
-| f32 | multilevel inverse | 3.88 us | 12.57 us | 23.04 us | 5.94x | 1.83x |
+| f64 | single forward | 2.72 us | 5.22 us | 9.80 us | 3.60x | 1.88x |
+| f64 | single inverse | 2.67 us | 5.00 us | 6.49 us | 2.43x | 1.30x |
+| f64 | multilevel forward | 7.24 us | 16.24 us | 31.58 us | 4.36x | 1.94x |
+| f64 | multilevel inverse | 6.41 us | 15.26 us | 21.55 us | 3.36x | 1.41x |
+| f32 | single forward | 1.58 us | 3.84 us | 9.55 us | 6.06x | 2.49x |
+| f32 | single inverse | 1.48 us | 3.77 us | 6.57 us | 4.43x | 1.74x |
+| f32 | multilevel forward | 4.19 us | 13.18 us | 33.02 us | 7.88x | 2.50x |
+| f32 | multilevel inverse | 3.81 us | 12.57 us | 22.20 us | 5.82x | 1.77x |
 
-The planned binding wins all 92 canonical cases: 1.94x to 10.85x, with a 3.61x
-median. The deliberately conservative cold path wins 69 of 92 and has a 1.41x
+The planned binding wins all 92 canonical cases: 1.76x to 10.75x, with a 3.64x
+median. The deliberately conservative cold path wins 69 of 92 and has a 1.39x
 median; filter construction and boundary-row compilation dominate its short
 and long-filter losses.
+
+For 4,096-sample periodized multilevel Haar, the fused planned path takes 3.29
+us forward versus PyWavelets' 23.38 us (7.10x), and 3.80 us inverse versus
+17.47 us (4.60x).
 
 Long-filter f64 forward results make the compiled boundary-row benefit visible:
 
 | Wavelet | Length | Boundary | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| db38 | 16 | symmetric | 548 ns | 13.70 us | 3.62 us | 6.62x |
-| db38 | 16 | antireflect | 537 ns | 23.54 us | 4.04 us | 7.52x |
-| coif17 | 16 | symmetric | 627 ns | 22.08 us | 5.82 us | 9.29x |
-| coif17 | 16 | antireflect | 635 ns | 42.36 us | 6.89 us | 10.85x |
-| db38 | 4,096 | symmetric | 19.25 us | 40.16 us | 122.40 us | 6.36x |
-| db38 | 4,096 | antireflect | 19.43 us | 46.50 us | 124.61 us | 6.41x |
-| coif17 | 4,096 | symmetric | 26.58 us | 62.67 us | 192.27 us | 7.23x |
-| coif17 | 4,096 | antireflect | 27.55 us | 75.36 us | 204.88 us | 7.44x |
+| db38 | 16 | symmetric | 561 ns | 13.83 us | 3.71 us | 6.61x |
+| db38 | 16 | antireflect | 549 ns | 24.47 us | 4.05 us | 7.38x |
+| coif17 | 16 | symmetric | 610 ns | 21.93 us | 5.79 us | 9.49x |
+| coif17 | 16 | antireflect | 634 ns | 41.65 us | 6.82 us | 10.75x |
+| db38 | 4,096 | symmetric | 18.77 us | 39.31 us | 117.52 us | 6.26x |
+| db38 | 4,096 | antireflect | 19.29 us | 46.13 us | 123.39 us | 6.40x |
+| coif17 | 4,096 | symmetric | 26.94 us | 63.36 us | 195.47 us | 7.26x |
+| coif17 | 4,096 | antireflect | 26.54 us | 71.76 us | 192.66 us | 7.26x |
 
-At 4,096 samples, planned multilevel forward transforms are 5.85x to 6.56x
+At 4,096 samples, planned multilevel forward transforms are 5.88x to 6.65x
 faster than PyWavelets across these four long-filter boundary cases.
 
 ### Native Rust API
