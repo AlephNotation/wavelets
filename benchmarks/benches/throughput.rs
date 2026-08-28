@@ -108,7 +108,7 @@ fn benchmark_multilevel<T: WaveletNum>(criterion: &mut Criterion, precision: &st
     ];
 
     let mut group = criterion.benchmark_group(format!("multilevel/{precision}"));
-    for wavelet_name in ["db4", "sym4", "coif3", "bior4.4", "rbio4.4"] {
+    for wavelet_name in ["db1", "db4", "sym4", "coif3", "bior4.4", "rbio4.4"] {
         for (boundary_name, boundary) in BOUNDARIES {
             let wavelet = wavelet(wavelet_name);
             let mut planner = DwtPlanner::<T>::new();
