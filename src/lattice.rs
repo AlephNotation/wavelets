@@ -1,7 +1,7 @@
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use crate::{Wavelet, WaveletNum, lattice_coefficients};
 
 #[derive(Clone, Copy, Debug)]
@@ -17,7 +17,7 @@ pub(crate) struct LatticeFilter<T> {
     pub(crate) scale: T,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 impl<T: WaveletNum> LatticeFilter<T> {
     pub(crate) fn new(wavelet: &Wavelet) -> Option<Self> {
         // The generated factors currently carry an f64 error analysis. In
@@ -43,7 +43,10 @@ impl<T: WaveletNum> LatticeFilter<T> {
     }
 }
 
-#[cfg(all(test, target_arch = "aarch64"))]
+#[cfg(all(
+    test,
+    any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")
+))]
 mod tests {
     use super::{LatticeFilter, LatticeSection};
     use crate::Wavelet;

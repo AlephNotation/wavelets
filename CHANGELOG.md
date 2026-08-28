@@ -36,10 +36,10 @@ All notable changes to `wavelets` are documented here.
   with long filters. Plans factor both analysis channels into constant bases and
   finite-difference corrections, then use a precision-aware event cost model to
   select it or fall back to the existing SIMD kernel on every execution.
-- Added reproducibly generated, conditioned paraunitary lattice factors and a
-  safe NEON `f64` analysis backend for selected long orthogonal filters. The
-  planner keeps compiled boundary rows and automatically retains the direct
-  kernel below the measured crossover.
+- Added reproducibly generated, conditioned paraunitary lattice factors and
+  safe NEON and AVX-512 `f64` analysis backends for selected long orthogonal
+  filters. The planner keeps compiled boundary rows and automatically retains
+  the direct kernel below the measured crossover.
 - Added and published a 24-case same-interpreter structured-input benchmark
   suite with dense controls, two run densities, two boundary modes, and both
   supported precisions for the qualifying long filters.

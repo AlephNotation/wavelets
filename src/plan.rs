@@ -569,12 +569,12 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         let analysis_annihilator =
             AnnihilatorFilter::new(&data[..filter_len], &data[filter_len..2 * filter_len])
                 .map(Arc::new);
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
         let analysis_lattice = (!periodized)
             .then(|| LatticeFilter::new(wavelet))
             .flatten()
             .map(Arc::new);
-        #[cfg(not(target_arch = "aarch64"))]
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
         let analysis_lattice = None;
 
         let rec_lo_start = data.len();
@@ -662,6 +662,37 @@ pub(crate) struct PlannedDwt<T> {
     simd_level: SimdLevel,
 }
 
+fn lattice_simd_supported(level: SimdLevel) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        !level.is_fallback()
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        level.as_avx512().is_some()
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    {
+        let _ = level;
+        false
+    }
+}
+
+fn lattice_preempts_annihilator(level: SimdLevel) -> bool {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        // On AVX-512, the lattice is faster even than the annihilator's
+        // zero-event endpoint. Scanning for structure can therefore never
+        // select a better executor once this backend is available.
+        level.as_avx512().is_some()
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        let _ = level;
+        false
+    }
+}
+
 impl<T: WaveletNum> PlannedDwt<T> {
     pub(crate) fn new(
         signal_len: usize,
@@ -674,9 +705,14 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
         let (dec_lo, dec_hi) = filters.analysis();
-        let lattice = (!simd_level.is_fallback())
+        let lattice = lattice_simd_supported(simd_level)
             .then(|| filters.analysis_lattice.clone())
             .flatten();
+        let annihilator = if lattice.is_some() && lattice_preempts_annihilator(simd_level) {
+            None
+        } else {
+            filters.analysis_annihilator.clone()
+        };
         let analysis = build_analysis(
             signal_len,
             coeff_len,
@@ -684,7 +720,7 @@ impl<T: WaveletNum> PlannedDwt<T> {
             dec_hi,
             AnalysisBackends {
                 butterfly: filters.analysis_butterfly,
-                annihilator: filters.analysis_annihilator.clone(),
+                annihilator,
                 lattice,
             },
             boundary,
@@ -1570,51 +1606,30 @@ mod tests {
 
     #[test]
     fn annihilator_selection_depends_on_filter_support() {
-        let short = create_dwt_plan::<f64>(
-            4_096,
-            &Wavelet::daubechies(20).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
-        let long = create_dwt_plan::<f64>(
-            4_096,
-            &Wavelet::daubechies(38).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
+        let db20 = equivalent_custom_wavelet(&Wavelet::daubechies(20).unwrap());
+        let db38 = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
+        let coif17 = equivalent_custom_wavelet(&Wavelet::coiflet(17).unwrap());
+        let short =
+            create_dwt_plan::<f64>(4_096, &db20, Boundary::Symmetric, SimdLevel::new()).unwrap();
+        let long =
+            create_dwt_plan::<f64>(4_096, &db38, Boundary::Symmetric, SimdLevel::new()).unwrap();
 
         assert!(short.analysis.annihilator.is_none());
         assert!(long.analysis.annihilator.is_some());
 
-        let f32_db38 = create_dwt_plan::<f32>(
-            4_096,
-            &Wavelet::daubechies(38).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
-        let f32_coif17 = create_dwt_plan::<f32>(
-            4_096,
-            &Wavelet::coiflet(17).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
+        let f32_db38 =
+            create_dwt_plan::<f32>(4_096, &db38, Boundary::Symmetric, SimdLevel::new()).unwrap();
+        let f32_coif17 =
+            create_dwt_plan::<f32>(4_096, &coif17, Boundary::Symmetric, SimdLevel::new()).unwrap();
         assert!(f32_db38.analysis.annihilator.is_none());
         assert!(f32_coif17.analysis.annihilator.is_some());
     }
 
     #[test]
     fn dense_signal_rejects_annihilator_execution() {
-        let plan = create_dwt_plan::<f64>(
-            4_096,
-            &Wavelet::daubechies(38).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
+        let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
+        let plan =
+            create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Symmetric, SimdLevel::new()).unwrap();
         let signal: Vec<_> = (0..plan.signal_len)
             .map(|index| (index as f64 * 0.173).sin())
             .collect();
@@ -1631,13 +1646,9 @@ mod tests {
 
     #[test]
     fn non_finite_or_overflowing_differences_use_direct_execution() {
-        let plan = create_dwt_plan::<f64>(
-            4_096,
-            &Wavelet::daubechies(38).unwrap(),
-            Boundary::Symmetric,
-            SimdLevel::new(),
-        )
-        .unwrap();
+        let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
+        let plan =
+            create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Symmetric, SimdLevel::new()).unwrap();
         let annihilator = plan.analysis.annihilator.as_ref().unwrap();
 
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
@@ -1751,6 +1762,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn avx512_lattice_preempts_the_dominated_structure_scan() {
+        let level = SimdLevel::new();
+        if !lattice_preempts_annihilator(level) {
+            return;
+        }
+        let plan = create_dwt_plan::<f64>(
+            4_096,
+            &Wavelet::daubechies(38).unwrap(),
+            Boundary::Symmetric,
+            level,
+        )
+        .unwrap();
+        assert!(plan.analysis.annihilator.is_none());
+        assert!(matches!(
+            plan.analysis
+                .interior
+                .as_ref()
+                .map(|interior| &interior.kernel),
+            Some(AnalysisKernel::Lattice(_))
+        ));
+    }
+
     fn assert_lattice_matches_direct(
         wavelet: &Wavelet,
         boundary: Boundary,
@@ -1760,15 +1794,16 @@ mod tests {
         let mut accelerated =
             create_dwt_plan::<f64>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
         accelerated.analysis.annihilator = None;
-        #[cfg(target_arch = "aarch64")]
-        assert!(matches!(
-            accelerated
-                .analysis
-                .interior
-                .as_ref()
-                .map(|interior| &interior.kernel),
-            Some(AnalysisKernel::Lattice(_))
-        ));
+        if lattice_simd_supported(SimdLevel::new()) {
+            assert!(matches!(
+                accelerated
+                    .analysis
+                    .interior
+                    .as_ref()
+                    .map(|interior| &interior.kernel),
+                Some(AnalysisKernel::Lattice(_))
+            ));
+        }
 
         let mut direct =
             create_dwt_plan::<f64>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
@@ -1811,11 +1846,12 @@ mod tests {
         signal: Vec<T>,
         close: impl Fn(T, T) -> bool,
     ) {
+        let wavelet = equivalent_custom_wavelet(wavelet);
         let accelerated =
-            create_dwt_plan::<T>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
+            create_dwt_plan::<T>(signal.len(), &wavelet, boundary, SimdLevel::new()).unwrap();
         let annihilator = accelerated.analysis.annihilator.as_ref().unwrap();
         let mut direct =
-            create_dwt_plan::<T>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
+            create_dwt_plan::<T>(signal.len(), &wavelet, boundary, SimdLevel::new()).unwrap();
         direct.analysis.annihilator = None;
 
         let mut actual_approx = vec![T::zero(); accelerated.coeff_len];
@@ -1836,6 +1872,16 @@ mod tests {
                 "{boundary:?} coefficient {coefficient}: {actual:?} != {expected:?}"
             );
         }
+    }
+
+    fn equivalent_custom_wavelet(wavelet: &Wavelet) -> Wavelet {
+        Wavelet::from_filters(
+            wavelet.dec_lo(),
+            wavelet.dec_hi(),
+            wavelet.rec_lo(),
+            wavelet.rec_hi(),
+        )
+        .unwrap()
     }
 
     fn extended_sample(signal: &[f64], index: isize, boundary: Boundary) -> f64 {

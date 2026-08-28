@@ -79,7 +79,7 @@ fn main() {
     for wavelet_name in ["db20", "sym20", "db38", "coif17"] {
         let wavelet = Wavelet::from_name(wavelet_name).unwrap();
         let direct_wavelet = direct_equivalent(&wavelet);
-        for len in [512, 1_024, 2_048, 4_096, 16_384] {
+        for len in [512, 1_024, 2_048, 4_096, 16_384, 65_536, 262_144, 1_048_576] {
             let signal = signal::<f64>(len);
             let mut direct = Executor::new(len, &direct_wavelet);
             let mut automatic = Executor::new(len, &wavelet);
