@@ -15,7 +15,7 @@ backend. Both reports use Rust 1.98's release profile with no additional
 ### Same-interpreter Python API
 
 This report was generated from clean commit
-`0fe0934152dc1b169ef8fa3d020c28ce79b8d483`. Both implementations run in the
+`ccc1577cf1831ee2d0d6e6e8ec95c94f691d7e9c`. Both implementations run in the
 same CPython interpreter and receive the same NumPy inputs. The `planned` path
 reuses a `wavelets-rs` plan. The deliberately conservative `cold` path creates
 the canonical wavelet and plan inside every call, while PyWavelets receives a
@@ -26,18 +26,18 @@ Signal length 4,096, db4, symmetric extension:
 
 | Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| f64 | single forward | 2.85 us | 5.40 us | 10.37 us | 3.63x | 1.92x |
-| f64 | single inverse | 2.67 us | 4.99 us | 6.44 us | 2.41x | 1.29x |
-| f64 | multilevel forward | 7.18 us | 16.16 us | 31.57 us | 4.40x | 1.95x |
-| f64 | multilevel inverse | 6.45 us | 15.61 us | 21.83 us | 3.38x | 1.40x |
-| f32 | single forward | 1.61 us | 3.81 us | 9.77 us | 6.06x | 2.56x |
-| f32 | single inverse | 1.51 us | 3.76 us | 6.51 us | 4.30x | 1.73x |
-| f32 | multilevel forward | 4.05 us | 12.55 us | 31.48 us | 7.77x | 2.51x |
-| f32 | multilevel inverse | 3.78 us | 12.41 us | 22.72 us | 6.02x | 1.83x |
+| f64 | single forward | 2.86 us | 5.36 us | 10.44 us | 3.64x | 1.95x |
+| f64 | single inverse | 2.66 us | 4.99 us | 6.47 us | 2.43x | 1.30x |
+| f64 | multilevel forward | 7.63 us | 17.08 us | 33.38 us | 4.38x | 1.95x |
+| f64 | multilevel inverse | 6.51 us | 15.79 us | 22.32 us | 3.43x | 1.41x |
+| f32 | single forward | 1.62 us | 3.84 us | 9.73 us | 5.99x | 2.53x |
+| f32 | single inverse | 1.50 us | 3.72 us | 6.41 us | 4.27x | 1.73x |
+| f32 | multilevel forward | 4.26 us | 13.03 us | 32.98 us | 7.75x | 2.53x |
+| f32 | multilevel inverse | 3.88 us | 12.57 us | 23.04 us | 5.94x | 1.83x |
 
-The planned binding wins all 92 canonical cases, ranging from 1.78x to 10.77x
-with a 3.63x median. The cold path wins 69 of 92, ranging from 0.03x to 4.50x
-with a 1.40x median. Its losses expose the intended plan-once tradeoff: filter
+The planned binding wins all 92 canonical cases, ranging from 1.94x to 10.85x
+with a 3.61x median. The cold path wins 69 of 92, ranging from 0.03x to 4.37x
+with a 1.41x median. Its losses expose the intended plan-once tradeoff: filter
 construction and boundary-row compilation can dominate execution for short or
 long-filter transforms.
 
@@ -48,17 +48,17 @@ compiled sparse edge rows:
 
 | Wavelet | Length | Boundary | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| db38 | 16 | symmetric | 574 ns | 14.05 us | 3.74 us | 6.51x |
-| db38 | 16 | antireflect | 559 ns | 23.88 us | 4.16 us | 7.44x |
-| coif17 | 16 | symmetric | 637 ns | 22.11 us | 5.88 us | 9.23x |
-| coif17 | 16 | antireflect | 622 ns | 40.82 us | 6.70 us | 10.77x |
-| db38 | 4,096 | symmetric | 19.84 us | 42.03 us | 129.29 us | 6.52x |
-| db38 | 4,096 | antireflect | 19.14 us | 45.25 us | 122.39 us | 6.39x |
-| coif17 | 4,096 | symmetric | 27.21 us | 65.25 us | 205.93 us | 7.57x |
-| coif17 | 4,096 | antireflect | 27.77 us | 74.20 us | 206.92 us | 7.45x |
+| db38 | 16 | symmetric | 548 ns | 13.70 us | 3.62 us | 6.62x |
+| db38 | 16 | antireflect | 537 ns | 23.54 us | 4.04 us | 7.52x |
+| coif17 | 16 | symmetric | 627 ns | 22.08 us | 5.82 us | 9.29x |
+| coif17 | 16 | antireflect | 635 ns | 42.36 us | 6.89 us | 10.85x |
+| db38 | 4,096 | symmetric | 19.25 us | 40.16 us | 122.40 us | 6.36x |
+| db38 | 4,096 | antireflect | 19.43 us | 46.50 us | 124.61 us | 6.41x |
+| coif17 | 4,096 | symmetric | 26.58 us | 62.67 us | 192.27 us | 7.23x |
+| coif17 | 4,096 | antireflect | 27.55 us | 75.36 us | 204.88 us | 7.44x |
 
 At length 4,096, planned multilevel forward transforms range from 5.85x to
-6.63x faster than PyWavelets across the same wavelets and boundaries. Complete
+6.56x faster than PyWavelets across the same wavelets and boundaries. Complete
 environment metadata, checksums, batch sizes, and all 5,520 raw timing samples
 are in
 [apple-m4-max-python-api.json](apple-m4-max-python-api.json).
