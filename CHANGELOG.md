@@ -22,6 +22,8 @@ All notable changes to `wavelets` are documented here.
   cold plan-plus-execute performance against PyWavelets with raw samples.
 - Published the Apple M4 Max Python-to-Python comparison with both planning
   boundaries and all raw timing samples.
+- Compiled antireflect extension into constant-time affine sample rules,
+  removing repeated boundary walks for long filters and multilevel transforms.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
