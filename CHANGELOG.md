@@ -32,6 +32,10 @@ All notable changes to `wavelets` are documented here.
 - Fused pairs of complete two-tap multilevel butterflies so intermediate
   approximations stay in registers, with direction-specific planner costing
   and smaller scratch layouts for fully fused cascades.
+- Added a scratch-free annihilator-split analysis backend for structured signals
+  with long filters. Plans factor both analysis channels into constant bases and
+  finite-difference corrections, then use a precision-aware event cost model to
+  select it or fall back to the existing SIMD kernel on every execution.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 

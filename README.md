@@ -15,6 +15,8 @@ slice includes:
 - PyWavelets-style `dwt`/`idwt` convenience functions and canonical name parsing;
 - fixed-length `f32` and `f64` DWT/IDWT plans;
 - safe portable SIMD analysis and synthesis with planner-cached runtime dispatch;
+- adaptive finite-difference analysis for structured signals with long filters,
+  with automatic SIMD fallback for dense inputs;
 - reusable allocation-free multilevel plans and contiguous decompositions; and
 - exhaustive reconstruction, PyWavelets reference, orthogonality, and
   vanishing-moment tests.

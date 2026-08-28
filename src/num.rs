@@ -7,6 +7,10 @@ mod private {
     pub trait Sealed {}
 
     pub trait SimdKernels: Sealed + Sized {
+        fn is_finite(value: Self) -> bool;
+
+        fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self;
+
         fn forward_interior(
             level: Level,
             interior: crate::simd::AnalysisInterior<'_, Self>,
@@ -58,6 +62,16 @@ mod private {
     impl Sealed for f64 {}
 
     impl SimdKernels for f32 {
+        #[inline]
+        fn is_finite(value: Self) -> bool {
+            value.is_finite()
+        }
+
+        #[inline]
+        fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
+            value.mul_add(multiplier, accumulator)
+        }
+
         #[inline]
         fn forward_interior(
             level: Level,
@@ -137,6 +151,16 @@ mod private {
     }
 
     impl SimdKernels for f64 {
+        #[inline]
+        fn is_finite(value: Self) -> bool {
+            value.is_finite()
+        }
+
+        #[inline]
+        fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
+            value.mul_add(multiplier, accumulator)
+        }
+
         #[inline]
         fn forward_interior(
             level: Level,
@@ -231,6 +255,7 @@ pub trait WaveletNum:
     + Add<Output = Self>
     + AddAssign
     + Mul<Output = Self>
+    + PartialEq
     + Sub<Output = Self>
 {
     /// Additive identity.
@@ -238,6 +263,16 @@ pub trait WaveletNum:
 
     /// Converts a filter coefficient into this numeric type.
     fn from_f64(value: f64) -> Self;
+}
+
+#[inline]
+pub(crate) fn mul_add<T: WaveletNum>(value: T, multiplier: T, accumulator: T) -> T {
+    <T as private::SimdKernels>::mul_add(value, multiplier, accumulator)
+}
+
+#[inline]
+pub(crate) fn is_finite<T: WaveletNum>(value: T) -> bool {
+    <T as private::SimdKernels>::is_finite(value)
 }
 
 #[inline]

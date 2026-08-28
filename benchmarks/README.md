@@ -44,6 +44,24 @@ lengths with db38/coif17 and symmetric/antireflect extension. It exists to keep
 long-filter boundary costs visible instead of hiding them behind the db4 mode
 sweep.
 
+The `structured_analysis` group tracks the adaptive long-filter executor on
+piecewise-constant and dense inputs. The dense cases are mandatory controls:
+they measure the event scan plus automatic SIMD fallback instead of reporting
+only the backend's favorable workload.
+
+For a wider diagnostic crossover matrix over precisions, long filters, lengths,
+run densities, and all boundary modes, run:
+
+```text
+cargo run --release --manifest-path benchmarks/Cargo.toml \
+  --bin annihilator_integrated
+cargo run --release --manifest-path benchmarks/Cargo.toml \
+  --bin annihilator_integrated -- --boundaries
+```
+
+This diagnostic runner uses short calibrated medians for architecture tuning;
+Criterion remains the source of regression measurements and published results.
+
 ## Hotpath
 
 The profiling driver uses public APIs. It defaults to a 4,096-sample `f64`

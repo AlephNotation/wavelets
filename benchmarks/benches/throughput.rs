@@ -184,6 +184,62 @@ fn benchmark_multilevel_haar_lengths<T: WaveletNum>(criterion: &mut Criterion, p
     group.finish();
 }
 
+fn benchmark_structured_long_filters<T: WaveletNum>(
+    criterion: &mut Criterion,
+    precision: &str,
+) {
+    const LENGTH: usize = 4_096;
+    let mut group = criterion.benchmark_group(format!("structured_analysis/{precision}"));
+    group.throughput(Throughput::Elements(LENGTH as u64));
+
+    for wavelet_name in ["db38", "coif17"] {
+        let wavelet = wavelet(wavelet_name);
+        let mut planner = DwtPlanner::<T>::new();
+        let plan = planner
+            .plan_dwt(LENGTH, &wavelet, Boundary::Symmetric)
+            .expect("benchmark case is valid");
+        for run_len in [64, 4_096] {
+            let signal: Vec<_> = (0..LENGTH)
+                .map(|index| {
+                    let run = index / run_len;
+                    T::from_f64(1.0 + (run as f64 * 0.17).sin() + 0.1 * run as f64)
+                })
+                .collect();
+            let mut approx = vec![T::zero(); plan.coeff_len()];
+            let mut detail = vec![T::zero(); plan.coeff_len()];
+            let mut scratch = vec![T::zero(); plan.scratch_len()];
+            group.bench_function(format!("forward/{wavelet_name}/runs-{run_len}"), |bencher| {
+                bencher.iter(|| {
+                    plan.forward_into(
+                        black_box(&signal),
+                        &mut approx,
+                        &mut detail,
+                        &mut scratch,
+                    );
+                    black_box((&approx, &detail));
+                });
+            });
+        }
+
+        let signal = signal::<T>(LENGTH);
+        let mut approx = vec![T::zero(); plan.coeff_len()];
+        let mut detail = vec![T::zero(); plan.coeff_len()];
+        let mut scratch = vec![T::zero(); plan.scratch_len()];
+        group.bench_function(format!("forward/{wavelet_name}/dense"), |bencher| {
+            bencher.iter(|| {
+                plan.forward_into(
+                    black_box(&signal),
+                    &mut approx,
+                    &mut detail,
+                    &mut scratch,
+                );
+                black_box((&approx, &detail));
+            });
+        });
+    }
+    group.finish();
+}
+
 fn benchmark_allocating<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
     const LENGTH: usize = 4_096;
 
@@ -264,6 +320,8 @@ fn throughput(criterion: &mut Criterion) {
     benchmark_multilevel::<f64>(criterion, "f64");
     benchmark_multilevel_haar_lengths::<f32>(criterion, "f32");
     benchmark_multilevel_haar_lengths::<f64>(criterion, "f64");
+    benchmark_structured_long_filters::<f32>(criterion, "f32");
+    benchmark_structured_long_filters::<f64>(criterion, "f64");
     benchmark_allocating::<f32>(criterion, "f32");
     benchmark_allocating::<f64>(criterion, "f64");
 }
