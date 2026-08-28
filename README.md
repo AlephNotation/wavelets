@@ -111,39 +111,65 @@ extension:
 
 | Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| f64 | single forward | 2.72 us | 5.22 us | 9.80 us | 3.60x | 1.88x |
-| f64 | single inverse | 2.67 us | 5.00 us | 6.49 us | 2.43x | 1.30x |
-| f64 | multilevel forward | 7.24 us | 16.24 us | 31.58 us | 4.36x | 1.94x |
-| f64 | multilevel inverse | 6.41 us | 15.26 us | 21.55 us | 3.36x | 1.41x |
-| f32 | single forward | 1.58 us | 3.84 us | 9.55 us | 6.06x | 2.49x |
-| f32 | single inverse | 1.48 us | 3.77 us | 6.57 us | 4.43x | 1.74x |
-| f32 | multilevel forward | 4.19 us | 13.18 us | 33.02 us | 7.88x | 2.50x |
-| f32 | multilevel inverse | 3.81 us | 12.57 us | 22.20 us | 5.82x | 1.77x |
+| f64 | single forward | 2.70 us | 5.18 us | 9.78 us | 3.63x | 1.89x |
+| f64 | single inverse | 2.60 us | 5.15 us | 6.30 us | 2.43x | 1.22x |
+| f64 | multilevel forward | 7.56 us | 16.93 us | 33.01 us | 4.37x | 1.95x |
+| f64 | multilevel inverse | 6.39 us | 15.50 us | 21.55 us | 3.37x | 1.39x |
+| f32 | single forward | 1.57 us | 3.75 us | 9.50 us | 6.04x | 2.54x |
+| f32 | single inverse | 1.44 us | 3.63 us | 6.23 us | 4.33x | 1.72x |
+| f32 | multilevel forward | 4.24 us | 13.06 us | 32.77 us | 7.74x | 2.51x |
+| f32 | multilevel inverse | 3.77 us | 12.29 us | 22.01 us | 5.84x | 1.79x |
 
-The planned binding wins all 92 canonical cases: 1.76x to 10.75x, with a 3.64x
-median. The deliberately conservative cold path wins 69 of 92 and has a 1.39x
+The planned binding wins all 92 canonical cases: 1.80x to 11.13x, with a 3.63x
+median. The deliberately conservative cold path wins 69 of 92 and has a 1.36x
 median; filter construction and boundary-row compilation dominate its short
 and long-filter losses.
 
-For 4,096-sample periodized multilevel Haar, the fused planned path takes 3.29
-us forward versus PyWavelets' 23.38 us (7.10x), and 3.80 us inverse versus
-17.47 us (4.60x).
+For 4,096-sample periodized multilevel Haar, the fused planned path takes 3.13
+us forward versus PyWavelets' 22.50 us (7.19x), and 3.81 us inverse versus
+17.53 us (4.61x).
 
 Long-filter f64 forward results make the compiled boundary-row benefit visible:
 
 | Wavelet | Length | Boundary | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| db38 | 16 | symmetric | 561 ns | 13.83 us | 3.71 us | 6.61x |
-| db38 | 16 | antireflect | 549 ns | 24.47 us | 4.05 us | 7.38x |
-| coif17 | 16 | symmetric | 610 ns | 21.93 us | 5.79 us | 9.49x |
-| coif17 | 16 | antireflect | 634 ns | 41.65 us | 6.82 us | 10.75x |
-| db38 | 4,096 | symmetric | 18.77 us | 39.31 us | 117.52 us | 6.26x |
-| db38 | 4,096 | antireflect | 19.29 us | 46.13 us | 123.39 us | 6.40x |
-| coif17 | 4,096 | symmetric | 26.94 us | 63.36 us | 195.47 us | 7.26x |
-| coif17 | 4,096 | antireflect | 26.54 us | 71.76 us | 192.66 us | 7.26x |
+| db38 | 16 | symmetric | 511 ns | 13.62 us | 3.50 us | 6.86x |
+| db38 | 16 | antireflect | 541 ns | 23.91 us | 4.01 us | 7.41x |
+| coif17 | 16 | symmetric | 594 ns | 21.91 us | 5.63 us | 9.48x |
+| coif17 | 16 | antireflect | 587 ns | 40.59 us | 6.53 us | 11.13x |
+| db38 | 4,096 | symmetric | 19.81 us | 41.30 us | 128.34 us | 6.48x |
+| db38 | 4,096 | antireflect | 18.90 us | 46.04 us | 119.00 us | 6.30x |
+| coif17 | 4,096 | symmetric | 27.44 us | 63.62 us | 203.67 us | 7.42x |
+| coif17 | 4,096 | antireflect | 26.30 us | 71.92 us | 186.62 us | 7.10x |
 
-At 4,096 samples, planned multilevel forward transforms are 5.88x to 6.65x
+At 4,096 samples, planned multilevel forward transforms are 5.69x to 6.34x
 faster than PyWavelets across these four long-filter boundary cases.
+
+Structured long-filter inputs expose the adaptive finite-difference backend.
+These 4,096-sample symmetric forward transforms include output allocation and
+exact structure discovery inside every timed call:
+
+| Precision | Wavelet | Input | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| f64 | db38 | dense control | 19.81 us | 41.30 us | 128.34 us | 6.48x | 3.11x |
+| f64 | db38 | runs of 64 | 12.05 us | 33.13 us | 121.94 us | 10.12x | 3.68x |
+| f64 | db38 | runs of 256 | 10.36 us | 31.71 us | 128.70 us | 12.43x | 4.06x |
+| f64 | db38 | constant | 9.67 us | 30.79 us | 128.89 us | 13.32x | 4.19x |
+| f64 | coif17 | dense control | 27.44 us | 63.62 us | 203.67 us | 7.42x | 3.20x |
+| f64 | coif17 | runs of 64 | 12.49 us | 47.82 us | 188.26 us | 15.07x | 3.94x |
+| f64 | coif17 | runs of 256 | 10.36 us | 46.00 us | 194.87 us | 18.81x | 4.24x |
+| f64 | coif17 | constant | 9.91 us | 45.97 us | 206.23 us | 20.82x | 4.49x |
+| f32 | coif17 | dense control | 15.13 us | 50.00 us | 89.80 us | 5.93x | 1.80x |
+| f32 | coif17 | runs of 64 | 11.79 us | 47.06 us | 88.55 us | 7.51x | 1.88x |
+| f32 | coif17 | runs of 256 | 9.60 us | 45.14 us | 88.48 us | 9.21x | 1.96x |
+| f32 | coif17 | constant | 8.90 us | 44.50 us | 88.68 us | 9.96x | 1.99x |
+
+Across all 24 symmetric and antireflect structured-suite cases—including the
+dense controls—the planned binding wins by 5.93x to 20.82x with a 10.13x
+median. The cold path also wins every case, with a 3.16x median. Within the
+symmetric results, selecting the adaptive path for a constant input reduces
+`wavelets-rs` planned time by 2.05x for f64 db38, 2.77x for f64 coif17, and
+1.70x for f32 coif17 relative to each dense control.
 
 ### Native Rust API
 

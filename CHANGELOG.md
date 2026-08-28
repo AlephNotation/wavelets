@@ -36,6 +36,9 @@ All notable changes to `wavelets` are documented here.
   with long filters. Plans factor both analysis channels into constant bases and
   finite-difference corrections, then use a precision-aware event cost model to
   select it or fall back to the existing SIMD kernel on every execution.
+- Added and published a 24-case same-interpreter structured-input benchmark
+  suite with dense controls, two run densities, two boundary modes, and both
+  supported precisions for the qualifying long filters.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
