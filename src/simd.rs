@@ -879,7 +879,9 @@ mod tests {
                     .collect();
 
                 for second_offset in 0..=1 {
-                    let mut out = vec![-12_345.0; 27];
+                    // Exercises at least one vector on AVX-512 f32 (the widest
+                    // supported backend) while retaining an untouched tail.
+                    let mut out = vec![-12_345.0; 83];
                     let inverse_pairs = dispatch!(Level::new(), simd => inverse_periodized(
                         simd,
                         PeriodizedInterior {

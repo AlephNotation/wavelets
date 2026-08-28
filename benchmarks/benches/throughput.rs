@@ -184,10 +184,7 @@ fn benchmark_multilevel_haar_lengths<T: WaveletNum>(criterion: &mut Criterion, p
     group.finish();
 }
 
-fn benchmark_structured_long_filters<T: WaveletNum>(
-    criterion: &mut Criterion,
-    precision: &str,
-) {
+fn benchmark_structured_long_filters<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
     const LENGTH: usize = 4_096;
     let mut group = criterion.benchmark_group(format!("structured_analysis/{precision}"));
     group.throughput(Throughput::Elements(LENGTH as u64));
@@ -208,17 +205,20 @@ fn benchmark_structured_long_filters<T: WaveletNum>(
             let mut approx = vec![T::zero(); plan.coeff_len()];
             let mut detail = vec![T::zero(); plan.coeff_len()];
             let mut scratch = vec![T::zero(); plan.scratch_len()];
-            group.bench_function(format!("forward/{wavelet_name}/runs-{run_len}"), |bencher| {
-                bencher.iter(|| {
-                    plan.forward_into(
-                        black_box(&signal),
-                        &mut approx,
-                        &mut detail,
-                        &mut scratch,
-                    );
-                    black_box((&approx, &detail));
-                });
-            });
+            group.bench_function(
+                format!("forward/{wavelet_name}/runs-{run_len}"),
+                |bencher| {
+                    bencher.iter(|| {
+                        plan.forward_into(
+                            black_box(&signal),
+                            &mut approx,
+                            &mut detail,
+                            &mut scratch,
+                        );
+                        black_box((&approx, &detail));
+                    });
+                },
+            );
         }
 
         let signal = signal::<T>(LENGTH);
@@ -227,12 +227,7 @@ fn benchmark_structured_long_filters<T: WaveletNum>(
         let mut scratch = vec![T::zero(); plan.scratch_len()];
         group.bench_function(format!("forward/{wavelet_name}/dense"), |bencher| {
             bencher.iter(|| {
-                plan.forward_into(
-                    black_box(&signal),
-                    &mut approx,
-                    &mut detail,
-                    &mut scratch,
-                );
+                plan.forward_into(black_box(&signal), &mut approx, &mut detail, &mut scratch);
                 black_box((&approx, &detail));
             });
         });
