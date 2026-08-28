@@ -19,6 +19,13 @@ pub struct AnalysisInterior<'a, T> {
     pub(crate) first_newest: usize,
 }
 
+pub struct ButterflyAnalysis<'a, T> {
+    pub(crate) signal: &'a [T],
+    pub(crate) first_newest: usize,
+    pub(crate) low_scale: T,
+    pub(crate) high_scale: T,
+}
+
 #[derive(Clone, Copy)]
 struct AnalysisAccumulators<V> {
     low_earlier: V,
@@ -32,6 +39,13 @@ pub struct LinearSynthesis<'a, T> {
     pub(crate) rec_hi: &'a [T],
     pub(crate) approx: &'a [T],
     pub(crate) detail: &'a [T],
+}
+
+pub struct ButterflySynthesis<'a, T> {
+    pub(crate) approx: &'a [T],
+    pub(crate) detail: &'a [T],
+    pub(crate) low_scale: T,
+    pub(crate) high_scale: T,
 }
 
 pub struct PeriodizedInterior<'a, T> {
@@ -59,6 +73,29 @@ pub(crate) fn forward_interior<S: Simd, T: SimdSample<S>>(
     } else {
         forward_interior_batches::<_, _, 2>(simd, &interior, approx, detail)
     }
+}
+
+#[inline(always)]
+pub(crate) fn forward_butterfly<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: ButterflyAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized_outputs = approx.len() - approx.len() % lanes;
+
+    for output in (0..vectorized_outputs).step_by(lanes) {
+        let input = analysis.first_newest - 1 + 2 * output;
+        let first = T::Vector::from_slice(simd, &analysis.signal[input..input + lanes]);
+        let second =
+            T::Vector::from_slice(simd, &analysis.signal[input + lanes..input + 2 * lanes]);
+        let (earlier, later) = first.deinterleave(second);
+        ((earlier + later) * analysis.low_scale).store_slice(&mut approx[output..output + lanes]);
+        ((earlier - later) * analysis.high_scale).store_slice(&mut detail[output..output + lanes]);
+    }
+
+    vectorized_outputs
 }
 
 #[inline(always)]
@@ -168,6 +205,30 @@ pub(crate) fn inverse_periodized<S: Simd, T: SimdSample<S>>(
         1 => inverse_periodized_offset::<_, _, 1>(simd, interior, out),
         _ => unreachable!("periodized synthesis phases are at most one coefficient apart"),
     }
+}
+
+#[inline(always)]
+pub(crate) fn inverse_butterfly<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    synthesis: ButterflySynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let pair_count = out.len() / 2;
+    let vectorized_pairs = pair_count - pair_count % lanes;
+
+    for pair in (0..vectorized_pairs).step_by(lanes) {
+        let low = T::Vector::from_slice(simd, &synthesis.approx[pair..pair + lanes])
+            * synthesis.low_scale;
+        let high = T::Vector::from_slice(simd, &synthesis.detail[pair..pair + lanes])
+            * synthesis.high_scale;
+        let (first, second) = (low + high).interleave(low - high);
+        let output = 2 * pair;
+        first.store_slice(&mut out[output..output + lanes]);
+        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+    }
+
+    vectorized_pairs
 }
 
 #[inline(always)]
@@ -461,7 +522,8 @@ mod tests {
     use fearless_simd::{Level, dispatch};
 
     use super::{
-        AnalysisInterior, LinearSynthesis, PeriodizedInterior, forward_interior, inverse_linear,
+        AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LinearSynthesis,
+        PeriodizedInterior, forward_butterfly, forward_interior, inverse_butterfly, inverse_linear,
         inverse_periodized,
     };
 
@@ -517,6 +579,34 @@ mod tests {
                     .iter()
                     .all(|&sample| sample == -12_345.0));
 
+                let mut butterfly_approx = vec![-12_345.0; 41];
+                let mut butterfly_detail = vec![-12_345.0; 41];
+                let butterfly_outputs = dispatch!(Level::new(), simd => forward_butterfly(
+                    simd,
+                    ButterflyAnalysis {
+                        signal: &signal,
+                        first_newest: 1,
+                        low_scale: 0.5,
+                        high_scale: 0.25,
+                    },
+                    &mut butterfly_approx,
+                    &mut butterfly_detail,
+                ));
+                assert!(butterfly_outputs > 0);
+                assert!(butterfly_outputs < butterfly_approx.len());
+                for output in 0..butterfly_outputs {
+                    let earlier = signal[2 * output];
+                    let later = signal[2 * output + 1];
+                    assert_eq!(butterfly_approx[output], (earlier + later) * 0.5);
+                    assert_eq!(butterfly_detail[output], (earlier - later) * 0.25);
+                }
+                assert!(butterfly_approx[butterfly_outputs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+                assert!(butterfly_detail[butterfly_outputs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+
                 let rec_lo = dec_lo;
                 let rec_hi = dec_hi;
                 let coefficients: Vec<$sample> = (0..44)
@@ -555,6 +645,29 @@ mod tests {
                     assert!((out[2 * pair + 1] - (odd_low + odd_high)).abs() <= $tolerance);
                 }
                 assert!(out[2 * inverse_pairs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+
+                let mut butterfly_out = vec![-12_345.0; 83];
+                let butterfly_pairs = dispatch!(Level::new(), simd => inverse_butterfly(
+                    simd,
+                    ButterflySynthesis {
+                        approx: &coefficients,
+                        detail: &signal[..44],
+                        low_scale: 0.5,
+                        high_scale: 0.25,
+                    },
+                    &mut butterfly_out,
+                ));
+                assert!(butterfly_pairs > 0);
+                assert!(butterfly_pairs < butterfly_out.len() / 2);
+                for pair in 0..butterfly_pairs {
+                    let low = coefficients[pair] * 0.5;
+                    let high = signal[pair] * 0.25;
+                    assert_eq!(butterfly_out[2 * pair], low + high);
+                    assert_eq!(butterfly_out[2 * pair + 1], low - high);
+                }
+                assert!(butterfly_out[2 * butterfly_pairs..]
                     .iter()
                     .all(|&sample| sample == -12_345.0));
 

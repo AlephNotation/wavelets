@@ -5,8 +5,13 @@ use std::sync::{Arc, Weak};
 use fearless_simd::Level as SimdLevel;
 
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
-use crate::num::{forward_interior_simd, inverse_linear_simd, inverse_periodized_simd};
-use crate::simd::{AnalysisInterior, LinearSynthesis, PeriodizedInterior};
+use crate::num::{
+    forward_butterfly_simd, forward_interior_simd, inverse_butterfly_simd, inverse_linear_simd,
+    inverse_periodized_simd,
+};
+use crate::simd::{
+    AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LinearSynthesis, PeriodizedInterior,
+};
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
 /// A reusable, fixed-length one-level DWT/IDWT plan.
@@ -236,16 +241,29 @@ pub(crate) fn create_dwt_plan<T: WaveletNum>(
 }
 
 #[derive(Debug)]
-struct InteriorAnalysis {
+struct InteriorAnalysis<T> {
     first_newest: usize,
     output_len: usize,
+    kernel: AnalysisKernel<T>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AnalysisKernel<T> {
+    Direct,
+    Butterfly { low_scale: T, high_scale: T },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Butterfly<T> {
+    low_scale: T,
+    high_scale: T,
 }
 
 #[derive(Debug)]
 struct AnalysisPlan<T> {
     edges: EdgePlan<T>,
     prefix_len: usize,
-    interior: Option<InteriorAnalysis>,
+    interior: Option<InteriorAnalysis<T>>,
 }
 
 #[derive(Debug)]
@@ -306,6 +324,8 @@ fn periodized_phases_are_swapped(filter_len: usize) -> bool {
 pub(crate) struct PreparedFilterBank<T> {
     data: Arc<[T]>,
     filter_len: usize,
+    analysis_butterfly: Option<Butterfly<T>>,
+    synthesis_butterfly: Option<Butterfly<T>>,
 }
 
 impl<T: WaveletNum> PreparedFilterBank<T> {
@@ -330,6 +350,14 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         Self {
             data: data.into(),
             filter_len,
+            analysis_butterfly: analysis_butterfly(wavelet).map(|butterfly| Butterfly {
+                low_scale: T::from_f64(butterfly.low_scale),
+                high_scale: T::from_f64(butterfly.high_scale),
+            }),
+            synthesis_butterfly: synthesis_butterfly(wavelet).map(|butterfly| Butterfly {
+                low_scale: T::from_f64(butterfly.low_scale),
+                high_scale: T::from_f64(butterfly.high_scale),
+            }),
         }
     }
 
@@ -343,6 +371,41 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         let synthesis = &self.data[2 * self.filter_len..];
         synthesis.split_at(self.filter_len)
     }
+}
+
+#[derive(Clone, Copy)]
+struct F64Butterfly {
+    low_scale: f64,
+    high_scale: f64,
+}
+
+fn analysis_butterfly(wavelet: &Wavelet) -> Option<F64Butterfly> {
+    // Detect the matrix factorization itself rather than a built-in name so
+    // equivalent caller-supplied banks select the same kernel.
+    let [low_first, low_second] = wavelet.dec_lo() else {
+        return None;
+    };
+    let [high_first, high_second] = wavelet.dec_hi() else {
+        return None;
+    };
+    (*low_first == *low_second && *high_first == -*high_second).then_some(F64Butterfly {
+        low_scale: *low_first,
+        high_scale: *high_second,
+    })
+}
+
+fn synthesis_butterfly(wavelet: &Wavelet) -> Option<F64Butterfly> {
+    // Synthesis may qualify independently from analysis for a custom bank.
+    let [low_first, low_second] = wavelet.rec_lo() else {
+        return None;
+    };
+    let [high_first, high_second] = wavelet.rec_hi() else {
+        return None;
+    };
+    (*low_first == *low_second && *high_first == -*high_second).then_some(F64Butterfly {
+        low_scale: *low_first,
+        high_scale: *high_first,
+    })
 }
 
 #[derive(Debug)]
@@ -367,7 +430,14 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
         let (dec_lo, dec_hi) = filters.analysis();
-        let analysis = build_analysis(signal_len, coeff_len, dec_lo, dec_hi, boundary);
+        let analysis = build_analysis(
+            signal_len,
+            coeff_len,
+            dec_lo,
+            dec_hi,
+            filters.analysis_butterfly,
+            boundary,
+        );
         Self {
             signal_len,
             coeff_len,
@@ -515,21 +585,50 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             let interior_end = prefix_len + interior.output_len;
             let interior_approx = &mut approx[prefix_len..interior_end];
             let interior_detail = &mut detail[prefix_len..interior_end];
-            let vectorized = forward_interior_simd(
-                self.simd_level,
-                AnalysisInterior {
-                    dec_lo,
-                    dec_hi,
-                    signal,
-                    first_newest: interior.first_newest,
-                },
-                interior_approx,
-                interior_detail,
-            );
+            let vectorized = match interior.kernel {
+                AnalysisKernel::Direct => forward_interior_simd(
+                    self.simd_level,
+                    AnalysisInterior {
+                        dec_lo,
+                        dec_hi,
+                        signal,
+                        first_newest: interior.first_newest,
+                    },
+                    interior_approx,
+                    interior_detail,
+                ),
+                AnalysisKernel::Butterfly {
+                    low_scale,
+                    high_scale,
+                } => forward_butterfly_simd(
+                    self.simd_level,
+                    ButterflyAnalysis {
+                        signal,
+                        first_newest: interior.first_newest,
+                        low_scale,
+                        high_scale,
+                    },
+                    interior_approx,
+                    interior_detail,
+                ),
+            };
 
             for output in vectorized..interior.output_len {
                 let newest = interior.first_newest + 2 * output;
-                let (low, high) = analyze_interior(signal, newest, dec_lo, dec_hi);
+                let (low, high) = match interior.kernel {
+                    AnalysisKernel::Direct => analyze_interior(signal, newest, dec_lo, dec_hi),
+                    AnalysisKernel::Butterfly {
+                        low_scale,
+                        high_scale,
+                    } => {
+                        let earlier = signal[newest - 1];
+                        let later = signal[newest];
+                        (
+                            (earlier + later) * low_scale,
+                            (earlier - later) * high_scale,
+                        )
+                    }
+                };
                 interior_approx[output] = low;
                 interior_detail[output] = high;
             }
@@ -558,10 +657,41 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             "scratch buffer is too small"
         );
 
-        if let Some(layout) = self.periodized_synthesis {
+        if let Some(butterfly) = self.filters.synthesis_butterfly {
+            inverse_butterfly(self.simd_level, butterfly, approx, detail, out);
+        } else if let Some(layout) = self.periodized_synthesis {
             self.inverse_periodized(layout, approx, detail, out);
         } else {
             self.inverse_linear(approx, detail, out);
+        }
+    }
+}
+
+fn inverse_butterfly<T: WaveletNum>(
+    simd_level: SimdLevel,
+    butterfly: Butterfly<T>,
+    approx: &[T],
+    detail: &[T],
+    out: &mut [T],
+) {
+    let vectorized_pairs = inverse_butterfly_simd(
+        simd_level,
+        ButterflySynthesis {
+            approx,
+            detail,
+            low_scale: butterfly.low_scale,
+            high_scale: butterfly.high_scale,
+        },
+        out,
+    );
+
+    for (pair, samples) in out[2 * vectorized_pairs..].chunks_mut(2).enumerate() {
+        let coefficient = vectorized_pairs + pair;
+        let low = approx[coefficient] * butterfly.low_scale;
+        let high = detail[coefficient] * butterfly.high_scale;
+        samples[0] = low + high;
+        if samples.len() == 2 {
+            samples[1] = low - high;
         }
     }
 }
@@ -728,6 +858,7 @@ fn build_analysis<T: WaveletNum>(
     coeff_len: usize,
     dec_lo: &[T],
     dec_hi: &[T],
+    butterfly: Option<Butterfly<T>>,
     boundary: Boundary,
 ) -> AnalysisPlan<T> {
     debug_assert_eq!(dec_lo.len(), dec_hi.len());
@@ -818,6 +949,12 @@ fn build_analysis<T: WaveletNum>(
         interior: interior_start.map(|start| InteriorAnalysis {
             first_newest: 2 * start + phase,
             output_len: interior_end - start,
+            kernel: butterfly.map_or(AnalysisKernel::Direct, |butterfly| {
+                AnalysisKernel::Butterfly {
+                    low_scale: butterfly.low_scale,
+                    high_scale: butterfly.high_scale,
+                }
+            }),
         }),
     }
 }
@@ -1045,6 +1182,33 @@ mod tests {
             let expected = signal[0] + index as f64 * (signal[1] - signal[0]);
             assert_eq!(actual, expected, "extended sample {index}");
         }
+    }
+
+    #[test]
+    fn butterfly_selection_depends_on_filter_algebra() {
+        let wavelet =
+            Wavelet::from_filters(&[0.5, 0.5], &[-0.25, 0.25], &[0.75, 0.75], &[0.125, -0.125])
+                .unwrap();
+        let plan =
+            create_dwt_plan::<f64>(128, &wavelet, Boundary::Symmetric, SimdLevel::new()).unwrap();
+
+        assert!(matches!(
+            plan.analysis
+                .interior
+                .as_ref()
+                .map(|interior| interior.kernel),
+            Some(AnalysisKernel::Butterfly {
+                low_scale: 0.5,
+                high_scale: 0.25,
+            })
+        ));
+        assert!(matches!(
+            plan.filters.synthesis_butterfly,
+            Some(Butterfly {
+                low_scale: 0.75,
+                high_scale: 0.125,
+            })
+        ));
     }
 
     #[test]

@@ -14,6 +14,13 @@ mod private {
             detail: &mut [Self],
         ) -> usize;
 
+        fn forward_butterfly(
+            level: Level,
+            analysis: crate::simd::ButterflyAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize;
+
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -23,6 +30,12 @@ mod private {
         fn inverse_linear(
             level: Level,
             synthesis: crate::simd::LinearSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize;
+
+        fn inverse_butterfly(
+            level: Level,
+            synthesis: crate::simd::ButterflySynthesis<'_, Self>,
             out: &mut [Self],
         ) -> usize;
     }
@@ -44,6 +57,18 @@ mod private {
         }
 
         #[inline]
+        fn forward_butterfly(
+            level: Level,
+            analysis: crate::simd::ButterflyAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_butterfly(
+                simd, analysis, approx, detail
+            ))
+        }
+
+        #[inline]
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -61,6 +86,15 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_butterfly(
+            level: Level,
+            synthesis: crate::simd::ButterflySynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
         }
     }
 
@@ -78,6 +112,18 @@ mod private {
         }
 
         #[inline]
+        fn forward_butterfly(
+            level: Level,
+            analysis: crate::simd::ButterflyAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_butterfly(
+                simd, analysis, approx, detail
+            ))
+        }
+
+        #[inline]
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -95,6 +141,15 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_butterfly(
+            level: Level,
+            synthesis: crate::simd::ButterflySynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
         }
     }
 }
@@ -138,6 +193,20 @@ pub(crate) fn forward_interior_simd<T: WaveletNum>(
 }
 
 #[inline]
+pub(crate) fn forward_butterfly_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::ButterflyAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_butterfly(level, analysis, approx, detail)
+    }
+}
+
+#[inline]
 pub(crate) fn inverse_linear_simd<T: WaveletNum>(
     level: fearless_simd::Level,
     synthesis: crate::simd::LinearSynthesis<'_, T>,
@@ -147,6 +216,19 @@ pub(crate) fn inverse_linear_simd<T: WaveletNum>(
         0
     } else {
         <T as private::SimdKernels>::inverse_linear(level, synthesis, out)
+    }
+}
+
+#[inline]
+pub(crate) fn inverse_butterfly_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    synthesis: crate::simd::ButterflySynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::inverse_butterfly(level, synthesis, out)
     }
 }
 

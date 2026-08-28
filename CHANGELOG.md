@@ -27,6 +27,8 @@ All notable changes to `wavelets` are documented here.
 - Composed boundary extension and analysis filters into contiguous sparse edge
   rows, coalescing repeated input samples while keeping low/high execution
   fused.
+- Added an algebraically detected two-tap butterfly backend for analysis and
+  synthesis, including matching custom filter banks, with safe SIMD dispatch.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
