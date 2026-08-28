@@ -94,11 +94,42 @@ representative runs spend time and allocate. A neutral in-process sampling
 harness compares both Rust execution APIs with PyWavelets and the genuinely
 compatible subset of GSL.
 
-Published Apple M4 Max/NEON results are available with every raw timing sample
-and the exact source revision in
+Published Apple M4 Max/NEON and AMD Ryzen 7 8745HS/AVX-512 results are available
+with every raw timing sample and the exact source revision in
 [benchmarks/results](benchmarks/results/README.md).
 
-### Python-to-Python API
+### AMD Ryzen 7 8745HS / AVX-512
+
+The x86 report compares both implementations in the same CPython 3.12
+interpreter, using the same NumPy inputs and including output creation and
+destruction. These are 4,096-sample f64 forward transforms with symmetric
+extension:
+
+| Wavelet | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
+| --- | --- | ---: | ---: | ---: | ---: |
+| db4 | single level | 2.13 us | 5.64 us | 10.55 us | 4.95x |
+| db20 | single level | 5.36 us | 43.22 us | 61.48 us | 11.47x |
+| db38 | single level | 9.78 us | 36.46 us | 123.10 us | 12.58x |
+| coif17 | single level | 13.47 us | 124.02 us | 179.79 us | 13.34x |
+| db38 | multilevel | 30.58 us | 155.66 us | 261.36 us | 8.55x |
+| coif17 | multilevel | 45.84 us | 601.09 us | 386.16 us | 8.43x |
+
+The planned binding wins all 92 canonical cases, ranging from 3.21x to 13.88x
+with a 4.82x median. Across the 24-case long-filter structured suite it is
+5.66x to 13.45x faster, with a 12.72x median.
+
+The paired native diagnostic shows what the AVX-512 paraunitary lattice
+executor contributes to supported long f64 analysis filters. At 4,096 samples
+it is 1.55x–1.62x faster than the direct-equivalent production executor; at
+262,144 samples the gain reaches 2.05x–2.64x. The planner keeps the direct path
+for the measured 512- and 1,024-sample transforms and crosses over at 2,048.
+AVX2-only hardware remains to be measured.
+
+Raw reports:
+[Python API](benchmarks/results/amd-ryzen-7-8745hs-python-api.json) and
+[native lattice crossover](benchmarks/results/amd-ryzen-7-8745hs-lattice.csv).
+
+### Apple M4 Max / NEON: Python-to-Python API
 
 This comparison imports `wavelets_rs` and PyWavelets into the same CPython
 interpreter and passes the same NumPy arrays to both. Output creation and
@@ -172,7 +203,7 @@ symmetric results, selecting the adaptive path for a constant input reduces
 `wavelets-rs` planned time by 1.22x for f64 db38, 1.79x for f64 coif17, and
 1.72x for f32 coif17 relative to each dense control.
 
-### Native Rust API
+### Apple M4 Max / NEON: Native Rust API
 
 These measurements use the lower-level native runner. Planning and input
 generation are outside the timer; Rust reports both allocating and reusable
@@ -190,9 +221,7 @@ caller-buffer paths.
 | f32 | multilevel inverse | 2.44 us | 2.15 us | 22.23 us | 10.33x |
 
 Across the complete 70-case matrix, PyWavelets divided by Rust `into` ranges
-from 2.34x to 32.98x, with a 4.65x median. Representative x86_64/AVX2 results
-remain pending access to physical hardware; shared-runner timings are
-deliberately not presented as authoritative results.
+from 2.34x to 32.98x, with a 4.65x median.
 
 ```rust
 use wavelets::{Boundary, DwtPlanner, Wavelet};

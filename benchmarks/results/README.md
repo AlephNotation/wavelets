@@ -147,11 +147,65 @@ to `wavelets` db1 with periodization. No other GSL cases are compared.
 | 16,384 | forward | 8.76 us | 47.54 us | 5.43x |
 | 16,384 | inverse | 7.51 us | 43.03 us | 5.73x |
 
-## x86_64 / AVX2
+## AMD Ryzen 7 8745HS / AVX-512
 
-Representative physical-hardware results are pending. GitHub-hosted runners
-exercise the benchmark harness but are virtualized, shared, and intentionally
-excluded from the published performance matrix.
+Measured on physical x86_64 hardware running Ubuntu with the runtime-selected
+AVX-512 backend. The reports use Rust 1.98's release profile with no additional
+`RUSTFLAGS`, CPython 3.12.3, NumPy 2.5.2, and PyWavelets distribution 1.9.0
+(whose module reports 1.8.0).
+
+### Same-interpreter Python API
+
+This report was generated from clean commit
+`f93c35049bdf20cccfbfdebfe20f02b2523b16db` with the same timing boundaries as
+the Apple report. Representative 4,096-sample symmetric-extension results are:
+
+| Precision | Wavelet | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| f64 | db4 | single forward | 2.13 us | 5.64 us | 10.55 us | 4.95x | 1.87x |
+| f64 | db20 | single forward | 5.36 us | 43.22 us | 61.48 us | 11.47x | 1.42x |
+| f64 | db38 | single forward | 9.78 us | 36.46 us | 123.10 us | 12.58x | 3.38x |
+| f64 | coif17 | single forward | 13.47 us | 124.02 us | 179.79 us | 13.34x | 1.45x |
+| f64 | db38 | multilevel forward | 30.58 us | 155.66 us | 261.36 us | 8.55x | 1.68x |
+| f64 | coif17 | multilevel forward | 45.84 us | 601.09 us | 386.16 us | 8.43x | 0.64x |
+
+The planned binding wins all 92 canonical cases, ranging from 3.21x to 13.88x
+with a 4.82x median. The cold path wins 64 of 92; its 1.29x median includes
+wavelet construction and planning on every call.
+
+Across the 24 structured long-filter cases, including dense controls and both
+boundary modes, planned execution ranges from 5.66x to 13.45x faster than
+PyWavelets with a 12.72x median. Cold execution ranges from 1.32x to 3.38x
+faster with a 2.25x median. Complete metadata, checksums, calibrated batch
+sizes, and all 6,720 timing samples are in
+[amd-ryzen-7-8745hs-python-api.json](amd-ryzen-7-8745hs-python-api.json).
+
+### Native lattice crossover
+
+This paired diagnostic alternates the built-in automatic plan with the normal
+production executor for an equivalent custom filter bank, which has no
+generated lattice factor. Planning and allocation are outside the timer. The
+custom-filter control can still perform its normal adaptive structure check,
+so this measures the complete executor choice rather than an isolated
+instruction-level kernel.
+
+| Wavelet | Length | Direct-equivalent | Automatic | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| db20 | 4,096 | 7.21 us | 4.66 us | 1.55x |
+| sym20 | 4,096 | 7.21 us | 4.67 us | 1.55x |
+| db38 | 4,096 | 14.45 us | 8.96 us | 1.61x |
+| coif17 | 4,096 | 20.52 us | 12.66 us | 1.62x |
+| db20 | 262,144 | 430.65 us | 207.52 us | 2.08x |
+| sym20 | 262,144 | 428.50 us | 209.28 us | 2.05x |
+| db38 | 262,144 | 811.92 us | 329.60 us | 2.46x |
+| coif17 | 262,144 | 1.09 ms | 414.16 us | 2.64x |
+
+The planner retains the direct executor through the measured 1,024-sample
+cases, then crosses over at 2,048 samples with a 1.23x–1.26x gain. The complete
+32-case matrix from 512 through 1,048,576 samples is in
+[amd-ryzen-7-8745hs-lattice.csv](amd-ryzen-7-8745hs-lattice.csv). AVX2-only
+hardware remains to be measured; the x86 lattice backend is currently selected
+only when AVX-512 is available.
 
 ## Reproduction
 

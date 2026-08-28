@@ -43,6 +43,8 @@ All notable changes to `wavelets` are documented here.
 - Added and published a 24-case same-interpreter structured-input benchmark
   suite with dense controls, two run densities, two boundary modes, and both
   supported precisions for the qualifying long filters.
+- Published physical AMD Ryzen 7 8745HS/AVX-512 results with the complete
+  112-case same-interpreter report and native lattice crossover matrix.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
