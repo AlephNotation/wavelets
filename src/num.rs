@@ -21,6 +21,14 @@ mod private {
             detail: &mut [Self],
         ) -> usize;
 
+        fn forward_butterfly_pair(
+            level: Level,
+            analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
+            approx: &mut [Self],
+            first_detail: &mut [Self],
+            second_detail: &mut [Self],
+        ) -> usize;
+
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -36,6 +44,12 @@ mod private {
         fn inverse_butterfly(
             level: Level,
             synthesis: crate::simd::ButterflySynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize;
+
+        fn inverse_butterfly_pair(
+            level: Level,
+            synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
             out: &mut [Self],
         ) -> usize;
     }
@@ -69,6 +83,19 @@ mod private {
         }
 
         #[inline]
+        fn forward_butterfly_pair(
+            level: Level,
+            analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
+            approx: &mut [Self],
+            first_detail: &mut [Self],
+            second_detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_butterfly_pair(
+                simd, analysis, approx, first_detail, second_detail
+            ))
+        }
+
+        #[inline]
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -95,6 +122,17 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_butterfly_pair(
+            level: Level,
+            synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_butterfly_pair(
+                simd, synthesis, out
+            ))
         }
     }
 
@@ -124,6 +162,19 @@ mod private {
         }
 
         #[inline]
+        fn forward_butterfly_pair(
+            level: Level,
+            analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
+            approx: &mut [Self],
+            first_detail: &mut [Self],
+            second_detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_butterfly_pair(
+                simd, analysis, approx, first_detail, second_detail
+            ))
+        }
+
+        #[inline]
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -150,6 +201,17 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_butterfly_pair(
+            level: Level,
+            synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_butterfly_pair(
+                simd, synthesis, out
+            ))
         }
     }
 }
@@ -207,6 +269,27 @@ pub(crate) fn forward_butterfly_simd<T: WaveletNum>(
 }
 
 #[inline]
+pub(crate) fn forward_butterfly_pair_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::ButterflyPairAnalysis<'_, T>,
+    approx: &mut [T],
+    first_detail: &mut [T],
+    second_detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_butterfly_pair(
+            level,
+            analysis,
+            approx,
+            first_detail,
+            second_detail,
+        )
+    }
+}
+
+#[inline]
 pub(crate) fn inverse_linear_simd<T: WaveletNum>(
     level: fearless_simd::Level,
     synthesis: crate::simd::LinearSynthesis<'_, T>,
@@ -229,6 +312,19 @@ pub(crate) fn inverse_butterfly_simd<T: WaveletNum>(
         0
     } else {
         <T as private::SimdKernels>::inverse_butterfly(level, synthesis, out)
+    }
+}
+
+#[inline]
+pub(crate) fn inverse_butterfly_pair_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    synthesis: crate::simd::ButterflyPairSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::inverse_butterfly_pair(level, synthesis, out)
     }
 }
 

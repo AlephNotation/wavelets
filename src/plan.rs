@@ -448,6 +448,32 @@ impl<T: WaveletNum> PlannedDwt<T> {
         }
     }
 
+    pub(crate) fn full_butterfly_analysis(&self) -> Option<(T, T)> {
+        if self.signal_len != 2 * self.coeff_len || self.analysis.prefix_len != 0 {
+            return None;
+        }
+        let interior = self.analysis.interior.as_ref()?;
+        if interior.first_newest != 1 || interior.output_len != self.coeff_len {
+            return None;
+        }
+        match interior.kernel {
+            AnalysisKernel::Butterfly {
+                low_scale,
+                high_scale,
+            } => Some((low_scale, high_scale)),
+            AnalysisKernel::Direct => None,
+        }
+    }
+
+    pub(crate) fn full_butterfly_synthesis(&self) -> Option<(T, T)> {
+        if self.signal_len != 2 * self.coeff_len {
+            return None;
+        }
+        self.filters
+            .synthesis_butterfly
+            .map(|butterfly| (butterfly.low_scale, butterfly.high_scale))
+    }
+
     fn inverse_linear(&self, approx: &[T], detail: &[T], out: &mut [T]) {
         let (rec_lo, rec_hi) = self.filters.synthesis();
         let half_filter_len = rec_lo.len() / 2;

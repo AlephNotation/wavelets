@@ -29,6 +29,9 @@ All notable changes to `wavelets` are documented here.
   fused.
 - Added an algebraically detected two-tap butterfly backend for analysis and
   synthesis, including matching custom filter banks, with safe SIMD dispatch.
+- Fused pairs of complete two-tap multilevel butterflies so intermediate
+  approximations stay in registers, with direction-specific planner costing
+  and smaller scratch layouts for fully fused cascades.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 

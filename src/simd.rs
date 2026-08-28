@@ -26,6 +26,14 @@ pub struct ButterflyAnalysis<'a, T> {
     pub(crate) high_scale: T,
 }
 
+pub struct ButterflyPairAnalysis<'a, T> {
+    pub(crate) signal: &'a [T],
+    pub(crate) first_low_scale: T,
+    pub(crate) first_high_scale: T,
+    pub(crate) second_low_scale: T,
+    pub(crate) second_high_scale: T,
+}
+
 #[derive(Clone, Copy)]
 struct AnalysisAccumulators<V> {
     low_earlier: V,
@@ -46,6 +54,16 @@ pub struct ButterflySynthesis<'a, T> {
     pub(crate) detail: &'a [T],
     pub(crate) low_scale: T,
     pub(crate) high_scale: T,
+}
+
+pub struct ButterflyPairSynthesis<'a, T> {
+    pub(crate) approx: &'a [T],
+    pub(crate) first_detail: &'a [T],
+    pub(crate) second_detail: &'a [T],
+    pub(crate) first_low_scale: T,
+    pub(crate) first_high_scale: T,
+    pub(crate) second_low_scale: T,
+    pub(crate) second_high_scale: T,
 }
 
 pub struct PeriodizedInterior<'a, T> {
@@ -93,6 +111,51 @@ pub(crate) fn forward_butterfly<S: Simd, T: SimdSample<S>>(
         let (earlier, later) = first.deinterleave(second);
         ((earlier + later) * analysis.low_scale).store_slice(&mut approx[output..output + lanes]);
         ((earlier - later) * analysis.high_scale).store_slice(&mut detail[output..output + lanes]);
+    }
+
+    vectorized_outputs
+}
+
+#[inline(always)]
+pub(crate) fn forward_butterfly_pair<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: ButterflyPairAnalysis<'_, T>,
+    approx: &mut [T],
+    first_detail: &mut [T],
+    second_detail: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized_outputs = approx.len() - approx.len() % lanes;
+
+    for output in (0..vectorized_outputs).step_by(lanes) {
+        let input = 4 * output;
+        let first = T::Vector::from_slice(simd, &analysis.signal[input..input + lanes]);
+        let second =
+            T::Vector::from_slice(simd, &analysis.signal[input + lanes..input + 2 * lanes]);
+        let third =
+            T::Vector::from_slice(simd, &analysis.signal[input + 2 * lanes..input + 3 * lanes]);
+        let fourth =
+            T::Vector::from_slice(simd, &analysis.signal[input + 3 * lanes..input + 4 * lanes]);
+
+        let (even_first, odd_first) = first.deinterleave(second);
+        let (even_second, odd_second) = third.deinterleave(fourth);
+        let (first_sample, third_sample) = even_first.deinterleave(even_second);
+        let (second_sample, fourth_sample) = odd_first.deinterleave(odd_second);
+
+        let first_low = (first_sample + second_sample) * analysis.first_low_scale;
+        let second_low = (third_sample + fourth_sample) * analysis.first_low_scale;
+        let first_high = (first_sample - second_sample) * analysis.first_high_scale;
+        let second_high = (third_sample - fourth_sample) * analysis.first_high_scale;
+        let (first_high, second_high) = first_high.interleave(second_high);
+        let detail_output = 2 * output;
+        first_high.store_slice(&mut first_detail[detail_output..detail_output + lanes]);
+        second_high
+            .store_slice(&mut first_detail[detail_output + lanes..detail_output + 2 * lanes]);
+
+        ((first_low + second_low) * analysis.second_low_scale)
+            .store_slice(&mut approx[output..output + lanes]);
+        ((first_low - second_low) * analysis.second_high_scale)
+            .store_slice(&mut second_detail[output..output + lanes]);
     }
 
     vectorized_outputs
@@ -229,6 +292,58 @@ pub(crate) fn inverse_butterfly<S: Simd, T: SimdSample<S>>(
     }
 
     vectorized_pairs
+}
+
+#[inline(always)]
+pub(crate) fn inverse_butterfly_pair<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    synthesis: ButterflyPairSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized_inputs = synthesis.approx.len() - synthesis.approx.len() % lanes;
+
+    for input in (0..vectorized_inputs).step_by(lanes) {
+        let second_low = T::Vector::from_slice(simd, &synthesis.approx[input..input + lanes])
+            * synthesis.second_low_scale;
+        let second_high =
+            T::Vector::from_slice(simd, &synthesis.second_detail[input..input + lanes])
+                * synthesis.second_high_scale;
+        let first_approx = second_low + second_high;
+        let second_approx = second_low - second_high;
+
+        let detail_input = 2 * input;
+        let first_detail = T::Vector::from_slice(
+            simd,
+            &synthesis.first_detail[detail_input..detail_input + lanes],
+        );
+        let second_detail = T::Vector::from_slice(
+            simd,
+            &synthesis.first_detail[detail_input + lanes..detail_input + 2 * lanes],
+        );
+        let (first_detail, second_detail) = first_detail.deinterleave(second_detail);
+
+        let first_low = first_approx * synthesis.first_low_scale;
+        let first_high = first_detail * synthesis.first_high_scale;
+        let second_low = second_approx * synthesis.first_low_scale;
+        let second_high = second_detail * synthesis.first_high_scale;
+        let first_sample = first_low + first_high;
+        let second_sample = first_low - first_high;
+        let third_sample = second_low + second_high;
+        let fourth_sample = second_low - second_high;
+
+        let (even_first, even_second) = first_sample.interleave(third_sample);
+        let (odd_first, odd_second) = second_sample.interleave(fourth_sample);
+        let (first, second) = even_first.interleave(odd_first);
+        let (third, fourth) = even_second.interleave(odd_second);
+        let output = 4 * input;
+        first.store_slice(&mut out[output..output + lanes]);
+        second.store_slice(&mut out[output + lanes..output + 2 * lanes]);
+        third.store_slice(&mut out[output + 2 * lanes..output + 3 * lanes]);
+        fourth.store_slice(&mut out[output + 3 * lanes..output + 4 * lanes]);
+    }
+
+    vectorized_inputs
 }
 
 #[inline(always)]
@@ -522,9 +637,10 @@ mod tests {
     use fearless_simd::{Level, dispatch};
 
     use super::{
-        AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LinearSynthesis,
-        PeriodizedInterior, forward_butterfly, forward_interior, inverse_butterfly, inverse_linear,
-        inverse_periodized,
+        AnalysisInterior, ButterflyAnalysis, ButterflyPairAnalysis, ButterflyPairSynthesis,
+        ButterflySynthesis, LinearSynthesis, PeriodizedInterior, forward_butterfly,
+        forward_butterfly_pair, forward_interior, inverse_butterfly, inverse_butterfly_pair,
+        inverse_linear, inverse_periodized,
     };
 
     macro_rules! kernel_test {
@@ -607,6 +723,52 @@ mod tests {
                     .iter()
                     .all(|&sample| sample == -12_345.0));
 
+                let mut pair_approx = vec![-12_345.0; 23];
+                let mut first_pair_detail = vec![-12_345.0; 46];
+                let mut second_pair_detail = vec![-12_345.0; 23];
+                let pair_outputs = dispatch!(Level::new(), simd => forward_butterfly_pair(
+                    simd,
+                    ButterflyPairAnalysis {
+                        signal: &signal,
+                        first_low_scale: 0.5,
+                        first_high_scale: 0.25,
+                        second_low_scale: 0.75,
+                        second_high_scale: 0.125,
+                    },
+                    &mut pair_approx,
+                    &mut first_pair_detail,
+                    &mut second_pair_detail,
+                ));
+                assert!(pair_outputs > 0);
+                assert!(pair_outputs < pair_approx.len());
+                for output in 0..pair_outputs {
+                    let input = 4 * output;
+                    let first_low = (signal[input] + signal[input + 1]) * 0.5;
+                    let second_low = (signal[input + 2] + signal[input + 3]) * 0.5;
+                    assert_eq!(pair_approx[output], (first_low + second_low) * 0.75);
+                    assert_eq!(
+                        first_pair_detail[2 * output],
+                        (signal[input] - signal[input + 1]) * 0.25
+                    );
+                    assert_eq!(
+                        first_pair_detail[2 * output + 1],
+                        (signal[input + 2] - signal[input + 3]) * 0.25
+                    );
+                    assert_eq!(
+                        second_pair_detail[output],
+                        (first_low - second_low) * 0.125
+                    );
+                }
+                assert!(pair_approx[pair_outputs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+                assert!(first_pair_detail[2 * pair_outputs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+                assert!(second_pair_detail[pair_outputs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+
                 let rec_lo = dec_lo;
                 let rec_hi = dec_hi;
                 let coefficients: Vec<$sample> = (0..44)
@@ -668,6 +830,40 @@ mod tests {
                     assert_eq!(butterfly_out[2 * pair + 1], low - high);
                 }
                 assert!(butterfly_out[2 * butterfly_pairs..]
+                    .iter()
+                    .all(|&sample| sample == -12_345.0));
+
+                let mut pair_out = vec![-12_345.0; 4 * pair_approx.len()];
+                let inverse_pair_outputs = dispatch!(Level::new(), simd => inverse_butterfly_pair(
+                    simd,
+                    ButterflyPairSynthesis {
+                        approx: &pair_approx,
+                        first_detail: &first_pair_detail,
+                        second_detail: &second_pair_detail,
+                        first_low_scale: 0.75,
+                        first_high_scale: 0.125,
+                        second_low_scale: 0.5,
+                        second_high_scale: 0.25,
+                    },
+                    &mut pair_out,
+                ));
+                assert_eq!(inverse_pair_outputs, pair_outputs);
+                for input in 0..inverse_pair_outputs {
+                    let second_low = pair_approx[input] * 0.5;
+                    let second_high = second_pair_detail[input] * 0.25;
+                    let first_approx = second_low + second_high;
+                    let second_approx = second_low - second_high;
+                    let first_low = first_approx * 0.75;
+                    let first_high = first_pair_detail[2 * input] * 0.125;
+                    let second_low = second_approx * 0.75;
+                    let second_high = first_pair_detail[2 * input + 1] * 0.125;
+                    let output = 4 * input;
+                    assert_eq!(pair_out[output], first_low + first_high);
+                    assert_eq!(pair_out[output + 1], first_low - first_high);
+                    assert_eq!(pair_out[output + 2], second_low + second_high);
+                    assert_eq!(pair_out[output + 3], second_low - second_high);
+                }
+                assert!(pair_out[4 * inverse_pair_outputs..]
                     .iter()
                     .all(|&sample| sample == -12_345.0));
 
