@@ -36,6 +36,9 @@ Daubechies, Symlet, Coiflet, biorthogonal, and reverse-biorthogonal filters, all
 boundary modes, and multilevel transforms. Planning has its own suite so setup
 cost is not mixed into execution cost.
 
+The planning suite also tracks cold db38/coif17 antireflect plans so the cost
+of compiling sparse edge rows remains visible alongside their execution wins.
+
 The `boundary_stress` group separately crosses short and representative signal
 lengths with db38/coif17 and symmetric/antireflect extension. It exists to keep
 long-filter boundary costs visible instead of hiding them behind the db4 mode

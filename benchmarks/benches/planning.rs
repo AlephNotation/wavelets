@@ -15,7 +15,7 @@ fn criterion_config() -> Criterion {
 fn planning(criterion: &mut Criterion) {
     const LENGTH: usize = 4_096;
 
-    let wavelet = wavelet("db4");
+    let db4 = wavelet("db4");
     let mut group = criterion.benchmark_group("planning/f64");
 
     group.bench_function("single/cold/db4/symmetric/4096", |bencher| {
@@ -24,7 +24,7 @@ fn planning(criterion: &mut Criterion) {
             |mut planner| {
                 black_box(
                     planner
-                        .plan_dwt(LENGTH, &wavelet, Boundary::Symmetric)
+                        .plan_dwt(LENGTH, &db4, Boundary::Symmetric)
                         .expect("benchmark case is valid"),
                 )
             },
@@ -34,13 +34,13 @@ fn planning(criterion: &mut Criterion) {
 
     let mut planner = DwtPlanner::<f64>::new();
     let live_single = planner
-        .plan_dwt(LENGTH, &wavelet, Boundary::Symmetric)
+        .plan_dwt(LENGTH, &db4, Boundary::Symmetric)
         .expect("benchmark case is valid");
     group.bench_function("single/cache_hit/db4/symmetric/4096", |bencher| {
         bencher.iter(|| {
             black_box(
                 planner
-                    .plan_dwt(LENGTH, &wavelet, Boundary::Symmetric)
+                    .plan_dwt(LENGTH, &db4, Boundary::Symmetric)
                     .expect("benchmark case is valid"),
             )
         });
@@ -53,7 +53,7 @@ fn planning(criterion: &mut Criterion) {
             |mut planner| {
                 black_box(
                     planner
-                        .plan_wavedec(LENGTH, &wavelet, Boundary::Symmetric, Level::Max)
+                        .plan_wavedec(LENGTH, &db4, Boundary::Symmetric, Level::Max)
                         .expect("benchmark case is valid"),
                 )
             },
@@ -62,18 +62,42 @@ fn planning(criterion: &mut Criterion) {
     });
 
     let live_multilevel = planner
-        .plan_wavedec(LENGTH, &wavelet, Boundary::Symmetric, Level::Max)
+        .plan_wavedec(LENGTH, &db4, Boundary::Symmetric, Level::Max)
         .expect("benchmark case is valid");
     group.bench_function("multilevel/cache_hit/db4/symmetric/4096", |bencher| {
         bencher.iter(|| {
             black_box(
                 planner
-                    .plan_wavedec(LENGTH, &wavelet, Boundary::Symmetric, Level::Max)
+                    .plan_wavedec(LENGTH, &db4, Boundary::Symmetric, Level::Max)
                     .expect("benchmark case is valid"),
             )
         });
     });
     black_box(&live_multilevel);
+
+    for (wavelet_name, boundary_name, boundary, len) in [
+        ("db38", "antireflect", Boundary::Antireflect, 16),
+        ("coif17", "antireflect", Boundary::Antireflect, 16),
+        ("coif17", "antireflect", Boundary::Antireflect, 4_096),
+    ] {
+        let wavelet = wavelet(wavelet_name);
+        group.bench_function(
+            format!("single/cold/{wavelet_name}/{boundary_name}/{len}"),
+            |bencher| {
+                bencher.iter_batched(
+                    DwtPlanner::<f64>::new,
+                    |mut planner| {
+                        black_box(
+                            planner
+                                .plan_dwt(len, &wavelet, boundary)
+                                .expect("benchmark case is valid"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
 
     group.finish();
 }

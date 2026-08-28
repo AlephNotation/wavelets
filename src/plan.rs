@@ -243,9 +243,25 @@ struct InteriorAnalysis {
 
 #[derive(Debug)]
 struct AnalysisPlan<T> {
-    edge_rules: Box<[SampleRule<T>]>,
+    edges: EdgePlan<T>,
     prefix_len: usize,
     interior: Option<InteriorAnalysis>,
+}
+
+#[derive(Debug)]
+struct EdgePlan<T> {
+    // Each row is the filter-composed finite-boundary transform for one
+    // approximation/detail coefficient pair. Both channels share every input
+    // load, and repeated references to the same finite sample are coalesced.
+    row_offsets: Box<[usize]>,
+    terms: Box<[EdgeTerm<T>]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EdgeTerm<T> {
+    input: usize,
+    low: T,
+    high: T,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -284,29 +300,6 @@ impl PeriodizedSynthesis {
 
 fn periodized_phases_are_swapped(filter_len: usize) -> bool {
     !(filter_len / 2 - 1).is_multiple_of(2)
-}
-
-#[derive(Clone, Copy, Debug)]
-enum SampleRule<T> {
-    Zero,
-    Direct {
-        index: usize,
-        negative: bool,
-    },
-    SmoothLeft {
-        distance: usize,
-    },
-    SmoothRight {
-        distance: usize,
-    },
-    Linear2 {
-        indices: [usize; 2],
-        weights: [T; 2],
-    },
-    Linear3 {
-        indices: [usize; 3],
-        weights: [T; 3],
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -373,7 +366,8 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
-        let analysis = build_analysis(signal_len, coeff_len, filter_len, boundary);
+        let (dec_lo, dec_hi) = filters.analysis();
+        let analysis = build_analysis(signal_len, coeff_len, dec_lo, dec_hi, boundary);
         Self {
             signal_len,
             coeff_len,
@@ -508,12 +502,10 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
         let (dec_lo, dec_hi) = self.filters.analysis();
         let prefix_len = self.analysis.prefix_len;
-        let prefix_rules_end = prefix_len * dec_lo.len();
         analyze_edges(
             signal,
-            dec_lo,
-            dec_hi,
-            &self.analysis.edge_rules[..prefix_rules_end],
+            &self.analysis.edges,
+            0,
             &mut approx[..prefix_len],
             &mut detail[..prefix_len],
         );
@@ -546,9 +538,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
         analyze_edges(
             signal,
-            dec_lo,
-            dec_hi,
-            &self.analysis.edge_rules[prefix_rules_end..],
+            &self.analysis.edges,
+            prefix_len,
             &mut approx[suffix_start..],
             &mut detail[suffix_start..],
         );
@@ -735,9 +726,12 @@ pub(crate) fn coefficient_len(signal_len: usize, filter_len: usize, boundary: Bo
 fn build_analysis<T: WaveletNum>(
     signal_len: usize,
     coeff_len: usize,
-    filter_len: usize,
+    dec_lo: &[T],
+    dec_hi: &[T],
     boundary: Boundary,
 ) -> AnalysisPlan<T> {
+    debug_assert_eq!(dec_lo.len(), dec_hi.len());
+    let filter_len = dec_lo.len();
     let phase = if boundary == Boundary::Periodization {
         filter_len / 2
     } else {
@@ -759,16 +753,67 @@ fn build_analysis<T: WaveletNum>(
 
     let prefix_end = interior_start.unwrap_or(coeff_len);
     let edge_count = prefix_end + coeff_len - interior_end;
-    let mut edge_rules = Vec::with_capacity(edge_count * filter_len);
+    let mut row_offsets = Vec::with_capacity(edge_count + 1);
+    let mut terms = Vec::<EdgeTerm<T>>::with_capacity(edge_count * filter_len);
+    // A dense position map avoids hashing when it is no larger than the raw
+    // edge-rule grid. Large signals retain an O(filter_len) sparse planner.
+    let dense_position_limit = edge_count.saturating_mul(filter_len);
+    let mut dense_positions =
+        (signal_len <= dense_position_limit).then(|| vec![usize::MAX; signal_len]);
+    let mut sparse_positions = dense_positions
+        .is_none()
+        .then(|| HashMap::<usize, usize>::with_capacity(3 * filter_len));
+    row_offsets.push(0);
     for coefficient in (0..prefix_end).chain(interior_end..coeff_len) {
+        if let Some(positions) = &mut sparse_positions {
+            positions.clear();
+        }
+        let row_start = terms.len();
         let newest = (2 * coefficient + phase) as isize;
-        edge_rules.extend(
-            (0..filter_len).map(|tap| extension_rule(newest - tap as isize, signal_len, boundary)),
-        );
+        for tap in 0..filter_len {
+            for_each_extension_term(
+                newest - tap as isize,
+                signal_len,
+                boundary,
+                |input, weight| {
+                    let low = dec_lo[tap] * weight;
+                    let high = dec_hi[tap] * weight;
+                    let position = if let Some(positions) = &mut dense_positions {
+                        let position = positions[input];
+                        if position != usize::MAX && position >= row_start {
+                            Some(position)
+                        } else {
+                            positions[input] = terms.len();
+                            None
+                        }
+                    } else {
+                        let positions = sparse_positions
+                            .as_mut()
+                            .expect("one edge position map is always available");
+                        if let Some(&position) = positions.get(&input) {
+                            Some(position)
+                        } else {
+                            positions.insert(input, terms.len());
+                            None
+                        }
+                    };
+                    if let Some(position) = position {
+                        terms[position].low += low;
+                        terms[position].high += high;
+                    } else {
+                        terms.push(EdgeTerm { input, low, high });
+                    }
+                },
+            );
+        }
+        row_offsets.push(terms.len());
     }
 
     AnalysisPlan {
-        edge_rules: edge_rules.into_boxed_slice(),
+        edges: EdgePlan {
+            row_offsets: row_offsets.into_boxed_slice(),
+            terms: terms.into_boxed_slice(),
+        },
         prefix_len: prefix_end,
         interior: interior_start.map(|start| InteriorAnalysis {
             first_newest: 2 * start + phase,
@@ -797,59 +842,55 @@ fn analyze_interior<T: WaveletNum>(
 #[inline]
 fn analyze_edges<T: WaveletNum>(
     signal: &[T],
-    dec_lo: &[T],
-    dec_hi: &[T],
-    rules: &[SampleRule<T>],
+    edges: &EdgePlan<T>,
+    first_row: usize,
     approx: &mut [T],
     detail: &mut [T],
 ) {
-    debug_assert_eq!(rules.len(), approx.len() * dec_lo.len());
     debug_assert_eq!(approx.len(), detail.len());
-    for (rules, (approximation, detail)) in rules
-        .chunks_exact(dec_lo.len())
-        .zip(approx.iter_mut().zip(detail))
+    debug_assert!(first_row + approx.len() < edges.row_offsets.len());
+    for (row, (approximation, detail)) in
+        (first_row..).zip(approx.iter_mut().zip(detail.iter_mut()))
     {
         let mut low = T::zero();
         let mut high = T::zero();
-        for (tap, rule) in rules.iter().copied().enumerate() {
-            let sample = evaluate_sample(signal, rule);
-            low += dec_lo[tap] * sample;
-            high += dec_hi[tap] * sample;
+        for term in &edges.terms[edges.row_offsets[row]..edges.row_offsets[row + 1]] {
+            let sample = signal[term.input];
+            low += term.low * sample;
+            high += term.high * sample;
         }
         *approximation = low;
         *detail = high;
     }
 }
 
-fn extension_rule<T: WaveletNum>(
+fn for_each_extension_term<T: WaveletNum>(
     index: isize,
     signal_len: usize,
     boundary: Boundary,
-) -> SampleRule<T> {
+    mut visit: impl FnMut(usize, T),
+) {
+    // Every supported extension is a linear map from the finite signal to one
+    // requested sample. Planning composes these terms with both analysis
+    // filters; execution never needs to know which boundary mode produced it.
+    let weight = |value: f64| T::from_f64(value);
     if (0..signal_len as isize).contains(&index) {
-        return SampleRule::Direct {
-            index: index as usize,
-            negative: false,
-        };
+        visit(index as usize, weight(1.0));
+        return;
     }
 
     match boundary {
-        Boundary::Zero => SampleRule::Zero,
-        Boundary::Constant => SampleRule::Direct {
-            index: if index < 0 { 0 } else { signal_len - 1 },
-            negative: false,
-        },
-        Boundary::Periodic => SampleRule::Direct {
-            index: index.rem_euclid(signal_len as isize) as usize,
-            negative: false,
-        },
+        Boundary::Zero => {}
+        Boundary::Constant => {
+            visit(if index < 0 { 0 } else { signal_len - 1 }, weight(1.0));
+        }
+        Boundary::Periodic => {
+            visit(index.rem_euclid(signal_len as isize) as usize, weight(1.0));
+        }
         Boundary::Periodization => {
             let periodic_len = signal_len + signal_len % 2;
             let wrapped = index.rem_euclid(periodic_len as isize) as usize;
-            SampleRule::Direct {
-                index: wrapped.min(signal_len - 1),
-                negative: false,
-            }
+            visit(wrapped.min(signal_len - 1), weight(1.0));
         }
         Boundary::Symmetric => {
             let period = 2 * signal_len;
@@ -859,24 +900,15 @@ fn extension_rule<T: WaveletNum>(
             } else {
                 period - 1 - wrapped
             };
-            SampleRule::Direct {
-                index: reflected,
-                negative: false,
-            }
+            visit(reflected, weight(1.0));
         }
         Boundary::Antisymmetric => {
             let period = 2 * signal_len;
             let wrapped = index.rem_euclid(period as isize) as usize;
             if wrapped < signal_len {
-                SampleRule::Direct {
-                    index: wrapped,
-                    negative: false,
-                }
+                visit(wrapped, weight(1.0));
             } else {
-                SampleRule::Direct {
-                    index: period - 1 - wrapped,
-                    negative: true,
-                }
+                visit(period - 1 - wrapped, weight(-1.0));
             }
         }
         Boundary::Reflect => {
@@ -888,61 +920,30 @@ fn extension_rule<T: WaveletNum>(
             } else {
                 period - wrapped
             };
-            SampleRule::Direct {
-                index: reflected,
-                negative: false,
-            }
+            visit(reflected, weight(1.0));
         }
         Boundary::Smooth => {
             if signal_len == 1 {
-                SampleRule::Direct {
-                    index: 0,
-                    negative: false,
-                }
+                visit(0, weight(1.0));
             } else if index < 0 {
-                SampleRule::SmoothLeft {
-                    distance: (-index) as usize,
-                }
+                let distance = (-index) as f64;
+                visit(0, weight(1.0 + distance));
+                visit(1, weight(-distance));
             } else {
-                SampleRule::SmoothRight {
-                    distance: (index - (signal_len - 1) as isize) as usize,
-                }
+                let distance = (index - (signal_len - 1) as isize) as f64;
+                visit(signal_len - 1, weight(1.0 + distance));
+                visit(signal_len - 2, weight(-distance));
             }
         }
-        Boundary::Antireflect => antireflect_rule(index, signal_len),
+        Boundary::Antireflect => for_each_antireflect_term(index, signal_len, visit),
     }
 }
 
-#[inline]
-fn evaluate_sample<T: WaveletNum>(signal: &[T], rule: SampleRule<T>) -> T {
-    match rule {
-        SampleRule::Zero => T::zero(),
-        SampleRule::Direct { index, negative } => {
-            if negative {
-                T::zero() - signal[index]
-            } else {
-                signal[index]
-            }
-        }
-        SampleRule::SmoothLeft { distance } => {
-            signal[0] + T::from_f64(distance as f64) * (signal[0] - signal[1])
-        }
-        SampleRule::SmoothRight { distance } => {
-            let last = signal.len() - 1;
-            signal[last] + T::from_f64(distance as f64) * (signal[last] - signal[last - 1])
-        }
-        SampleRule::Linear2 { indices, weights } => {
-            signal[indices[0]] * weights[0] + signal[indices[1]] * weights[1]
-        }
-        SampleRule::Linear3 { indices, weights } => {
-            signal[indices[0]] * weights[0]
-                + signal[indices[1]] * weights[1]
-                + signal[indices[2]] * weights[2]
-        }
-    }
-}
-
-fn antireflect_rule<T: WaveletNum>(index: isize, signal_len: usize) -> SampleRule<T> {
+fn for_each_antireflect_term<T: WaveletNum>(
+    index: isize,
+    signal_len: usize,
+    mut visit: impl FnMut(usize, T),
+) {
     debug_assert!(signal_len >= 2);
     debug_assert!(!(0..signal_len as isize).contains(&index));
 
@@ -958,52 +959,28 @@ fn antireflect_rule<T: WaveletNum>(index: isize, signal_len: usize) -> SampleRul
 
     if index < 0 {
         if segment == 0 {
-            SampleRule::Linear2 {
-                indices: [0, offset],
-                weights: [weight(2), weight(-1)],
-            }
+            visit(0, weight(2));
+            visit(offset, weight(-1));
         } else if segment.is_multiple_of(2) {
-            SampleRule::Linear3 {
-                indices: [0, last, offset],
-                weights: [
-                    weight(segment as isize + 2),
-                    weight(-(segment as isize)),
-                    weight(-1),
-                ],
-            }
+            visit(0, weight(segment as isize + 2));
+            visit(last, weight(-(segment as isize)));
+            visit(offset, weight(-1));
         } else {
-            SampleRule::Linear3 {
-                indices: [0, last, last - offset],
-                weights: [
-                    weight(segment as isize + 1),
-                    weight(-(segment as isize) - 1),
-                    weight(1),
-                ],
-            }
+            visit(0, weight(segment as isize + 1));
+            visit(last, weight(-(segment as isize) - 1));
+            visit(last - offset, weight(1));
         }
     } else if segment == 0 {
-        SampleRule::Linear2 {
-            indices: [last, last - offset],
-            weights: [weight(2), weight(-1)],
-        }
+        visit(last, weight(2));
+        visit(last - offset, weight(-1));
     } else if segment.is_multiple_of(2) {
-        SampleRule::Linear3 {
-            indices: [0, last, last - offset],
-            weights: [
-                weight(-(segment as isize)),
-                weight(segment as isize + 2),
-                weight(-1),
-            ],
-        }
+        visit(0, weight(-(segment as isize)));
+        visit(last, weight(segment as isize + 2));
+        visit(last - offset, weight(-1));
     } else {
-        SampleRule::Linear3 {
-            indices: [0, last, offset],
-            weights: [
-                weight(-(segment as isize) - 1),
-                weight(segment as isize + 1),
-                weight(1),
-            ],
-        }
+        visit(0, weight(-(segment as isize) - 1));
+        visit(last, weight(segment as isize + 1));
+        visit(offset, weight(1));
     }
 }
 
@@ -1047,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn compiled_antireflect_rules_cover_repeated_reflections() {
+    fn antireflect_terms_cover_repeated_reflections() {
         let signal = [1.0_f64, 3.0, 6.0];
         let expected = [
             -29.0, -27.0, -24.0, -21.0, -19.0, -17.0, -14.0, -11.0, -9.0, -7.0, -4.0, -1.0, 1.0,
@@ -1055,12 +1032,7 @@ mod tests {
         ];
 
         let actual: Vec<_> = (-12..=14)
-            .map(|index| {
-                evaluate_sample(
-                    &signal,
-                    extension_rule(index, signal.len(), Boundary::Antireflect),
-                )
-            })
+            .map(|index| extended_sample(&signal, index, Boundary::Antireflect))
             .collect();
         assert_eq!(actual, expected);
     }
@@ -1069,12 +1041,38 @@ mod tests {
     fn two_sample_antireflect_is_linear_extrapolation() {
         let signal = [-3.0_f64, 5.0];
         for index in -128..=128 {
-            let actual = evaluate_sample(
-                &signal,
-                extension_rule(index, signal.len(), Boundary::Antireflect),
-            );
+            let actual = extended_sample(&signal, index, Boundary::Antireflect);
             let expected = signal[0] + index as f64 * (signal[1] - signal[0]);
             assert_eq!(actual, expected, "extended sample {index}");
         }
+    }
+
+    #[test]
+    fn compiled_edge_rows_coalesce_repeated_inputs() {
+        let wavelet = Wavelet::coiflet(17).unwrap();
+        let plan =
+            create_dwt_plan::<f64>(16, &wavelet, Boundary::Antireflect, SimdLevel::new()).unwrap();
+
+        for offsets in plan.analysis.edges.row_offsets.windows(2) {
+            let row = &plan.analysis.edges.terms[offsets[0]..offsets[1]];
+            assert!(row.len() <= plan.signal_len);
+            for (position, term) in row.iter().enumerate() {
+                assert!(
+                    row[..position]
+                        .iter()
+                        .all(|earlier| earlier.input != term.input),
+                    "edge row contains input {} more than once",
+                    term.input
+                );
+            }
+        }
+    }
+
+    fn extended_sample(signal: &[f64], index: isize, boundary: Boundary) -> f64 {
+        let mut value = 0.0;
+        for_each_extension_term::<f64>(index, signal.len(), boundary, |input, weight| {
+            value += signal[input] * weight;
+        });
+        value
     }
 }

@@ -24,6 +24,9 @@ All notable changes to `wavelets` are documented here.
   boundaries and all raw timing samples.
 - Compiled antireflect extension into constant-time affine sample rules,
   removing repeated boundary walks for long filters and multilevel transforms.
+- Composed boundary extension and analysis filters into contiguous sparse edge
+  rows, coalescing repeated input samples while keeping low/high execution
+  fused.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
