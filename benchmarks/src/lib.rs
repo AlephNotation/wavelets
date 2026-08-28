@@ -1,6 +1,8 @@
 use wavelets::{Boundary, Wavelet, WaveletNum};
 
 pub const SIGNAL_LENGTHS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
+pub const BOUNDARY_STRESS_LENGTHS: [usize; 4] = [2, 16, 64, 4_096];
+pub const BOUNDARY_STRESS_WAVELETS: [&str; 2] = ["db38", "coif17"];
 pub const FILTER_WAVELETS: [&str; 8] = [
     "db1", "db4", "db20", "db38", "sym4", "coif3", "bior4.4", "rbio4.4",
 ];
@@ -62,6 +64,26 @@ pub fn representative_cases() -> Vec<Case> {
     }
 
     cases
+}
+
+pub fn boundary_stress_cases() -> impl Iterator<Item = Case> {
+    BOUNDARY_STRESS_LENGTHS.into_iter().flat_map(|len| {
+        BOUNDARY_STRESS_WAVELETS
+            .into_iter()
+            .flat_map(move |wavelet_name| {
+                [
+                    ("symmetric", Boundary::Symmetric),
+                    ("antireflect", Boundary::Antireflect),
+                ]
+                .into_iter()
+                .map(move |(boundary_name, boundary)| Case {
+                    len,
+                    wavelet_name,
+                    boundary_name,
+                    boundary,
+                })
+            })
+    })
 }
 
 pub fn wavelet(name: &str) -> Wavelet {

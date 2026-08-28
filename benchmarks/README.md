@@ -36,6 +36,11 @@ Daubechies, Symlet, Coiflet, biorthogonal, and reverse-biorthogonal filters, all
 boundary modes, and multilevel transforms. Planning has its own suite so setup
 cost is not mixed into execution cost.
 
+The `boundary_stress` group separately crosses short and representative signal
+lengths with db38/coif17 and symmetric/antireflect extension. It exists to keep
+long-filter boundary costs visible instead of hiding them behind the db4 mode
+sweep.
+
 ## Hotpath
 
 The profiling driver uses public APIs. It defaults to a 4,096-sample `f64`

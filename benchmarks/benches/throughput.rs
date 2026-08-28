@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use wavelets::{Boundary, DwtPlanner, Level, WaveletNum, dwt, idwt, wavedec, waverec};
-use wavelets_benchmarks::{Case, representative_cases, signal, wavelet};
+use wavelets_benchmarks::{Case, boundary_stress_cases, representative_cases, signal, wavelet};
 
 fn criterion_config() -> Criterion {
     Criterion::default()
@@ -56,6 +56,41 @@ fn benchmark_single_level<T: WaveletNum>(criterion: &mut Criterion, precision: &
                         &mut scratch,
                     );
                     black_box(&reconstructed);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn benchmark_boundary_stress<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
+    let mut group = criterion.benchmark_group(format!("boundary_stress/{precision}"));
+
+    for Case {
+        len,
+        wavelet_name,
+        boundary_name,
+        boundary,
+    } in boundary_stress_cases()
+    {
+        let wavelet = wavelet(wavelet_name);
+        let mut planner = DwtPlanner::<T>::new();
+        let plan = planner
+            .plan_dwt(len, &wavelet, boundary)
+            .expect("benchmark case is valid");
+        let signal = signal::<T>(len);
+        let mut approx = vec![T::zero(); plan.coeff_len()];
+        let mut detail = vec![T::zero(); plan.coeff_len()];
+        let mut scratch = vec![T::zero(); plan.scratch_len()];
+
+        group.throughput(Throughput::Elements(len as u64));
+        group.bench_function(
+            format!("forward/{wavelet_name}/{boundary_name}/{len}"),
+            |bencher| {
+                bencher.iter(|| {
+                    plan.forward_into(black_box(&signal), &mut approx, &mut detail, &mut scratch);
+                    black_box((&approx, &detail));
                 });
             },
         );
@@ -190,6 +225,8 @@ fn benchmark_allocating<T: WaveletNum>(criterion: &mut Criterion, precision: &st
 fn throughput(criterion: &mut Criterion) {
     benchmark_single_level::<f32>(criterion, "f32");
     benchmark_single_level::<f64>(criterion, "f64");
+    benchmark_boundary_stress::<f32>(criterion, "f32");
+    benchmark_boundary_stress::<f64>(criterion, "f64");
     benchmark_multilevel::<f32>(criterion, "f32");
     benchmark_multilevel::<f64>(criterion, "f64");
     benchmark_allocating::<f32>(criterion, "f32");
