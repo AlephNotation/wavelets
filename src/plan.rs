@@ -6,12 +6,14 @@ use std::sync::{Arc, Weak};
 use fearless_simd::Level as SimdLevel;
 
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
+use crate::lattice::LatticeFilter;
 use crate::num::{
-    forward_butterfly_simd, forward_interior_simd, inverse_butterfly_simd, inverse_linear_simd,
-    inverse_periodized_simd, is_finite, mul_add,
+    forward_butterfly_simd, forward_interior_simd, forward_lattice_simd, inverse_butterfly_simd,
+    inverse_linear_simd, inverse_periodized_simd, is_finite, mul_add,
 };
 use crate::simd::{
-    AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LinearSynthesis, PeriodizedInterior,
+    AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LatticeAnalysis, LinearSynthesis,
+    MIN_LATTICE_OUTPUTS, PeriodizedInterior,
 };
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
@@ -248,10 +250,11 @@ struct InteriorAnalysis<T> {
     kernel: AnalysisKernel<T>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum AnalysisKernel<T> {
     Direct,
     Butterfly { low_scale: T, high_scale: T },
+    Lattice(Arc<LatticeFilter<T>>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -266,6 +269,12 @@ struct AnalysisPlan<T> {
     prefix_len: usize,
     interior: Option<InteriorAnalysis<T>>,
     annihilator: Option<AnnihilatorAnalysis<T>>,
+}
+
+struct AnalysisBackends<T> {
+    butterfly: Option<Butterfly<T>>,
+    annihilator: Option<Arc<AnnihilatorFilter<T>>>,
+    lattice: Option<Arc<LatticeFilter<T>>>,
 }
 
 // The scan costs more than the existing SIMD kernel below this support on the
@@ -547,6 +556,7 @@ pub(crate) struct PreparedFilterBank<T> {
     filter_len: usize,
     analysis_butterfly: Option<Butterfly<T>>,
     analysis_annihilator: Option<Arc<AnnihilatorFilter<T>>>,
+    analysis_lattice: Option<Arc<LatticeFilter<T>>>,
     synthesis_butterfly: Option<Butterfly<T>>,
 }
 
@@ -559,6 +569,13 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         let analysis_annihilator =
             AnnihilatorFilter::new(&data[..filter_len], &data[filter_len..2 * filter_len])
                 .map(Arc::new);
+        #[cfg(target_arch = "aarch64")]
+        let analysis_lattice = (!periodized)
+            .then(|| LatticeFilter::new(wavelet))
+            .flatten()
+            .map(Arc::new);
+        #[cfg(not(target_arch = "aarch64"))]
+        let analysis_lattice = None;
 
         let rec_lo_start = data.len();
         extend_polyphase(&mut data, wavelet.rec_lo());
@@ -580,6 +597,7 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
                 high_scale: T::from_f64(butterfly.high_scale),
             }),
             analysis_annihilator,
+            analysis_lattice,
             synthesis_butterfly: synthesis_butterfly(wavelet).map(|butterfly| Butterfly {
                 low_scale: T::from_f64(butterfly.low_scale),
                 high_scale: T::from_f64(butterfly.high_scale),
@@ -656,13 +674,19 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
         let (dec_lo, dec_hi) = filters.analysis();
+        let lattice = (!simd_level.is_fallback())
+            .then(|| filters.analysis_lattice.clone())
+            .flatten();
         let analysis = build_analysis(
             signal_len,
             coeff_len,
             dec_lo,
             dec_hi,
-            filters.analysis_butterfly,
-            filters.analysis_annihilator.clone(),
+            AnalysisBackends {
+                butterfly: filters.analysis_butterfly,
+                annihilator: filters.analysis_annihilator.clone(),
+                lattice,
+            },
             boundary,
         );
         Self {
@@ -683,12 +707,12 @@ impl<T: WaveletNum> PlannedDwt<T> {
         if interior.first_newest != 1 || interior.output_len != self.coeff_len {
             return None;
         }
-        match interior.kernel {
+        match &interior.kernel {
             AnalysisKernel::Butterfly {
                 low_scale,
                 high_scale,
-            } => Some((low_scale, high_scale)),
-            AnalysisKernel::Direct => None,
+            } => Some((*low_scale, *high_scale)),
+            AnalysisKernel::Direct | AnalysisKernel::Lattice(_) => None,
         }
     }
 
@@ -845,7 +869,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             let interior_end = prefix_len + interior.output_len;
             let interior_approx = &mut approx[prefix_len..interior_end];
             let interior_detail = &mut detail[prefix_len..interior_end];
-            let vectorized = match interior.kernel {
+            let vectorized = match &interior.kernel {
                 AnalysisKernel::Direct => forward_interior_simd(
                     self.simd_level,
                     AnalysisInterior {
@@ -865,8 +889,19 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
                     ButterflyAnalysis {
                         signal,
                         first_newest: interior.first_newest,
-                        low_scale,
-                        high_scale,
+                        low_scale: *low_scale,
+                        high_scale: *high_scale,
+                    },
+                    interior_approx,
+                    interior_detail,
+                ),
+                AnalysisKernel::Lattice(filter) => forward_lattice_simd(
+                    self.simd_level,
+                    LatticeAnalysis {
+                        signal,
+                        first_pair: (interior.first_newest - 1) / 2,
+                        sections: &filter.sections,
+                        scale: filter.scale,
                     },
                     interior_approx,
                     interior_detail,
@@ -875,8 +910,10 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
             for output in vectorized..interior.output_len {
                 let newest = interior.first_newest + 2 * output;
-                let (low, high) = match interior.kernel {
-                    AnalysisKernel::Direct => analyze_interior(signal, newest, dec_lo, dec_hi),
+                let (low, high) = match &interior.kernel {
+                    AnalysisKernel::Direct | AnalysisKernel::Lattice(_) => {
+                        analyze_interior(signal, newest, dec_lo, dec_hi)
+                    }
                     AnalysisKernel::Butterfly {
                         low_scale,
                         high_scale,
@@ -884,8 +921,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
                         let earlier = signal[newest - 1];
                         let later = signal[newest];
                         (
-                            (earlier + later) * low_scale,
-                            (earlier - later) * high_scale,
+                            (earlier + later) * *low_scale,
+                            (earlier - later) * *high_scale,
                         )
                     }
                 };
@@ -1118,8 +1155,7 @@ fn build_analysis<T: WaveletNum>(
     coeff_len: usize,
     dec_lo: &[T],
     dec_hi: &[T],
-    butterfly: Option<Butterfly<T>>,
-    annihilator: Option<Arc<AnnihilatorFilter<T>>>,
+    backends: AnalysisBackends<T>,
     boundary: Boundary,
 ) -> AnalysisPlan<T> {
     debug_assert_eq!(dec_lo.len(), dec_hi.len());
@@ -1210,14 +1246,27 @@ fn build_analysis<T: WaveletNum>(
         interior: interior_start.map(|start| InteriorAnalysis {
             first_newest: 2 * start + phase,
             output_len: interior_end - start,
-            kernel: butterfly.map_or(AnalysisKernel::Direct, |butterfly| {
-                AnalysisKernel::Butterfly {
+            kernel: backends.butterfly.map_or_else(
+                || {
+                    if boundary == Boundary::Periodization
+                        || interior_end - start < MIN_LATTICE_OUTPUTS
+                    {
+                        AnalysisKernel::Direct
+                    } else {
+                        backends
+                            .lattice
+                            .clone()
+                            .map_or(AnalysisKernel::Direct, AnalysisKernel::Lattice)
+                    }
+                },
+                |butterfly| AnalysisKernel::Butterfly {
                     low_scale: butterfly.low_scale,
                     high_scale: butterfly.high_scale,
-                }
-            }),
+                },
+            ),
         }),
-        annihilator: annihilator
+        annihilator: backends
+            .annihilator
             .map(|filter| AnnihilatorAnalysis::new(signal_len, coeff_len, boundary, filter)),
     }
 }
@@ -1483,7 +1532,7 @@ mod tests {
             plan.analysis
                 .interior
                 .as_ref()
-                .map(|interior| interior.kernel),
+                .map(|interior| &interior.kernel),
             Some(AnalysisKernel::Butterfly {
                 low_scale: 0.5,
                 high_scale: 0.25,
@@ -1652,6 +1701,108 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lattice_matches_direct_kernel_for_every_supported_boundary() {
+        let boundaries = [
+            Boundary::Zero,
+            Boundary::Constant,
+            Boundary::Symmetric,
+            Boundary::Reflect,
+            Boundary::Periodic,
+            Boundary::Smooth,
+            Boundary::Antisymmetric,
+            Boundary::Antireflect,
+        ];
+        for wavelet in [
+            Wavelet::daubechies(20).unwrap(),
+            Wavelet::symlet(20).unwrap(),
+            Wavelet::daubechies(38).unwrap(),
+            Wavelet::coiflet(17).unwrap(),
+        ] {
+            for boundary in boundaries {
+                let signal: Vec<_> = (0..4_096)
+                    .map(|index| {
+                        let index = index as f64;
+                        (index * 0.173).sin() + 0.25 * (index * 0.037).cos()
+                    })
+                    .collect();
+                assert_lattice_matches_direct(&wavelet, boundary, signal, 4.0e-13);
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_remains_finite_over_wide_dynamic_range() {
+        for wavelet in [
+            Wavelet::daubechies(38).unwrap(),
+            Wavelet::coiflet(17).unwrap(),
+        ] {
+            let signal: Vec<_> = (0_usize..4_096)
+                .map(|index| {
+                    let exponent = ((index * 811) % 1_801) as i32 - 900;
+                    let mantissa = 1.0 + ((index * 37) % 997) as f64 / 997.0;
+                    let sign = if index.is_multiple_of(2) { 1.0 } else { -1.0 };
+                    sign * mantissa * 2.0_f64.powi(exponent)
+                })
+                .collect();
+            assert_lattice_matches_direct(&wavelet, Boundary::Symmetric, signal, 2.0e-12);
+        }
+    }
+
+    fn assert_lattice_matches_direct(
+        wavelet: &Wavelet,
+        boundary: Boundary,
+        signal: Vec<f64>,
+        relative_tolerance: f64,
+    ) {
+        let mut accelerated =
+            create_dwt_plan::<f64>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
+        accelerated.analysis.annihilator = None;
+        #[cfg(target_arch = "aarch64")]
+        assert!(matches!(
+            accelerated
+                .analysis
+                .interior
+                .as_ref()
+                .map(|interior| &interior.kernel),
+            Some(AnalysisKernel::Lattice(_))
+        ));
+
+        let mut direct =
+            create_dwt_plan::<f64>(signal.len(), wavelet, boundary, SimdLevel::new()).unwrap();
+        direct.analysis.annihilator = None;
+        direct.analysis.interior.as_mut().unwrap().kernel = AnalysisKernel::Direct;
+
+        let mut actual_approx = vec![0.0; accelerated.coeff_len];
+        let mut actual_detail = vec![0.0; accelerated.coeff_len];
+        accelerated.forward_into(&signal, &mut actual_approx, &mut actual_detail, &mut []);
+        let mut expected_approx = vec![0.0; direct.coeff_len];
+        let mut expected_detail = vec![0.0; direct.coeff_len];
+        direct.forward_into(&signal, &mut expected_approx, &mut expected_detail, &mut []);
+
+        let scale = expected_approx
+            .iter()
+            .chain(&expected_detail)
+            .copied()
+            .map(f64::abs)
+            .fold(1.0, f64::max);
+        let mut maximum_error = 0.0_f64;
+        for (&actual, &expected) in actual_approx
+            .iter()
+            .chain(&actual_detail)
+            .zip(expected_approx.iter().chain(&expected_detail))
+        {
+            assert!(actual.is_finite());
+            maximum_error = maximum_error.max((actual - expected).abs());
+        }
+        assert!(
+            maximum_error <= relative_tolerance * scale,
+            "{} {boundary:?} maximum relative error {:.3e} exceeds {relative_tolerance:.3e}",
+            wavelet.name(),
+            maximum_error / scale,
+        );
     }
 
     fn assert_annihilator_matches_direct<T: WaveletNum>(

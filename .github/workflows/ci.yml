@@ -36,6 +36,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - run: python3 -m pip install --disable-pip-version-check -r tools/requirements-reference.txt
       - run: python3 tools/generate_builtin_coefficients.py --check
+      - run: python3 tools/generate_lattice_coefficients.py --check
       - run: python3 tools/generate_pywavelets_fixtures.py --check
       - run: python3 tools/generate_fuzz_seeds.py --check
 

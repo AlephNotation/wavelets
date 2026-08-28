@@ -33,6 +33,13 @@ mod private {
             second_detail: &mut [Self],
         ) -> usize;
 
+        fn forward_lattice(
+            level: Level,
+            analysis: crate::simd::LatticeAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize;
+
         fn inverse_periodized(
             level: Level,
             interior: crate::simd::PeriodizedInterior<'_, Self>,
@@ -106,6 +113,18 @@ mod private {
         ) -> usize {
             dispatch!(level, simd => crate::simd::forward_butterfly_pair(
                 simd, analysis, approx, first_detail, second_detail
+            ))
+        }
+
+        #[inline]
+        fn forward_lattice(
+            level: Level,
+            analysis: crate::simd::LatticeAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_lattice(
+                simd, analysis, approx, detail
             ))
         }
 
@@ -195,6 +214,18 @@ mod private {
         ) -> usize {
             dispatch!(level, simd => crate::simd::forward_butterfly_pair(
                 simd, analysis, approx, first_detail, second_detail
+            ))
+        }
+
+        #[inline]
+        fn forward_lattice(
+            level: Level,
+            analysis: crate::simd::LatticeAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_lattice(
+                simd, analysis, approx, detail
             ))
         }
 
@@ -321,6 +352,20 @@ pub(crate) fn forward_butterfly_pair_simd<T: WaveletNum>(
             first_detail,
             second_detail,
         )
+    }
+}
+
+#[inline]
+pub(crate) fn forward_lattice_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::LatticeAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_lattice(level, analysis, approx, detail)
     }
 }
 

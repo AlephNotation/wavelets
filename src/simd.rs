@@ -1,5 +1,7 @@
 use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 
+use crate::lattice::LatticeSection;
+
 pub(crate) trait SimdSample<S: Simd>: SimdFloatElement {
     type Vector: SimdFloat<S, Element = Self>;
 }
@@ -32,6 +34,13 @@ pub struct ButterflyPairAnalysis<'a, T> {
     pub(crate) first_high_scale: T,
     pub(crate) second_low_scale: T,
     pub(crate) second_high_scale: T,
+}
+
+pub struct LatticeAnalysis<'a, T> {
+    pub(crate) signal: &'a [T],
+    pub(crate) first_pair: usize,
+    pub(crate) sections: &'a [LatticeSection<T>],
+    pub(crate) scale: T,
 }
 
 #[derive(Clone, Copy)]
@@ -159,6 +168,202 @@ pub(crate) fn forward_butterfly_pair<S: Simd, T: SimdSample<S>>(
     }
 
     vectorized_outputs
+}
+
+pub(crate) const MIN_LATTICE_OUTPUTS: usize = 512;
+const LATTICE_TILE: usize = 8;
+const MAX_LATTICE_SECTIONS: usize = 51;
+
+#[inline(always)]
+pub(crate) fn forward_lattice<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: LatticeAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if T::Vector::N == 2 && approx.len() >= MIN_LATTICE_OUTPUTS {
+        forward_lattice_width_2(simd, analysis, approx, detail)
+    } else {
+        0
+    }
+}
+
+#[inline(always)]
+fn apply_lattice_section<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    section: LatticeSection<T>,
+    first: T::Vector,
+    second: T::Vector,
+) -> (T::Vector, T::Vector) {
+    let q = T::Vector::splat(simd, section.q);
+    match (section.chart, section.determinant) {
+        (0, 1) => ((-second).mul_add(q, first), first.mul_add(q, second)),
+        (0, -1) => (second.mul_add(q, first), first.mul_add(q, -second)),
+        (1, 1) => (first.mul_add(q, -second), second.mul_add(q, first)),
+        (1, -1) => (first.mul_add(q, second), (-second).mul_add(q, first)),
+        _ => unreachable!("generated lattice sections use two charts and unit determinants"),
+    }
+}
+
+#[inline(always)]
+fn apply_lattice_0_positive<S: Simd, T: SimdSample<S>>(
+    _simd: S,
+    q: T::Vector,
+    first: T::Vector,
+    second: T::Vector,
+) -> (T::Vector, T::Vector) {
+    ((-second).mul_add(q, first), first.mul_add(q, second))
+}
+
+#[inline(always)]
+fn apply_lattice_0_negative<S: Simd, T: SimdSample<S>>(
+    _simd: S,
+    q: T::Vector,
+    first: T::Vector,
+    second: T::Vector,
+) -> (T::Vector, T::Vector) {
+    (second.mul_add(q, first), first.mul_add(q, -second))
+}
+
+#[inline(always)]
+fn apply_lattice_1_positive<S: Simd, T: SimdSample<S>>(
+    _simd: S,
+    q: T::Vector,
+    first: T::Vector,
+    second: T::Vector,
+) -> (T::Vector, T::Vector) {
+    (first.mul_add(q, -second), second.mul_add(q, first))
+}
+
+#[inline(always)]
+fn apply_lattice_1_negative<S: Simd, T: SimdSample<S>>(
+    _simd: S,
+    q: T::Vector,
+    first: T::Vector,
+    second: T::Vector,
+) -> (T::Vector, T::Vector) {
+    (first.mul_add(q, second), (-second).mul_add(q, first))
+}
+
+#[inline(always)]
+fn load_lattice_pair_width_2<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    signal: &[T],
+    first_pair: usize,
+    second_pair: usize,
+) -> (T::Vector, T::Vector) {
+    let first_offset = 2 * first_pair;
+    let second_offset = 2 * second_pair;
+    let first = T::Vector::from_slice(simd, &signal[first_offset..first_offset + 2]);
+    let second = T::Vector::from_slice(simd, &signal[second_offset..second_offset + 2]);
+    first.deinterleave(second)
+}
+
+#[inline(always)]
+fn forward_lattice_width_2<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: LatticeAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    debug_assert_eq!(T::Vector::N, 2);
+    debug_assert_eq!(approx.len(), detail.len());
+    debug_assert!(analysis.sections.len() <= MAX_LATTICE_SECTIONS);
+
+    let processed = approx.len() - approx.len() % (2 * LATTICE_TILE);
+    let segment_len = processed / 2;
+    let delay_count = analysis.sections.len() - 1;
+    debug_assert!(analysis.first_pair >= delay_count);
+
+    let zero = T::Vector::splat(simd, T::default());
+    let mut state = [zero; MAX_LATTICE_SECTIONS];
+    for predecessor in analysis.first_pair - delay_count..analysis.first_pair {
+        let (mut first, mut second) = load_lattice_pair_width_2(
+            simd,
+            analysis.signal,
+            predecessor,
+            predecessor + segment_len,
+        );
+        (first, second) = apply_lattice_section(simd, analysis.sections[0], first, second);
+        for (stage, &section) in analysis.sections[1..].iter().enumerate() {
+            std::mem::swap(&mut second, &mut state[stage]);
+            (first, second) = apply_lattice_section(simd, section, first, second);
+        }
+    }
+
+    for offset in (0..segment_len).step_by(LATTICE_TILE) {
+        let mut first = [zero; LATTICE_TILE];
+        let mut second = [zero; LATTICE_TILE];
+        for time in 0..LATTICE_TILE {
+            (first[time], second[time]) = load_lattice_pair_width_2(
+                simd,
+                analysis.signal,
+                analysis.first_pair + offset + time,
+                analysis.first_pair + segment_len + offset + time,
+            );
+        }
+
+        let initial = analysis.sections[0];
+        let initial_q = T::Vector::splat(simd, initial.q);
+        macro_rules! apply_initial {
+            ($apply:ident) => {
+                for time in 0..LATTICE_TILE {
+                    (first[time], second[time]) =
+                        $apply::<S, T>(simd, initial_q, first[time], second[time]);
+                }
+            };
+        }
+        match (initial.chart, initial.determinant) {
+            (0, 1) => apply_initial!(apply_lattice_0_positive),
+            (0, -1) => apply_initial!(apply_lattice_0_negative),
+            (1, 1) => apply_initial!(apply_lattice_1_positive),
+            (1, -1) => apply_initial!(apply_lattice_1_negative),
+            _ => unreachable!("generated lattice section kind"),
+        }
+
+        for (stage, &section) in analysis.sections[1..].iter().enumerate() {
+            let final_previous = second[LATTICE_TILE - 1];
+            let q = T::Vector::splat(simd, section.q);
+            macro_rules! apply_stage {
+                ($apply:ident) => {
+                    for time in (0..LATTICE_TILE).rev() {
+                        let delayed = if time == 0 {
+                            state[stage]
+                        } else {
+                            second[time - 1]
+                        };
+                        (first[time], second[time]) = $apply::<S, T>(simd, q, first[time], delayed);
+                    }
+                };
+            }
+            match (section.chart, section.determinant) {
+                (0, 1) => apply_stage!(apply_lattice_0_positive),
+                (0, -1) => apply_stage!(apply_lattice_0_negative),
+                (1, 1) => apply_stage!(apply_lattice_1_positive),
+                (1, -1) => apply_stage!(apply_lattice_1_negative),
+                _ => unreachable!("generated lattice section kind"),
+            }
+            state[stage] = final_previous;
+        }
+
+        for time in (0..LATTICE_TILE).step_by(2) {
+            let (first_segment, second_segment) =
+                (first[time] * analysis.scale).interleave(first[time + 1] * analysis.scale);
+            first_segment.store_slice(&mut approx[offset + time..offset + time + 2]);
+            second_segment.store_slice(
+                &mut approx[segment_len + offset + time..segment_len + offset + time + 2],
+            );
+
+            let (first_segment, second_segment) =
+                (second[time] * analysis.scale).interleave(second[time + 1] * analysis.scale);
+            first_segment.store_slice(&mut detail[offset + time..offset + time + 2]);
+            second_segment.store_slice(
+                &mut detail[segment_len + offset + time..segment_len + offset + time + 2],
+            );
+        }
+    }
+
+    processed
 }
 
 #[inline(always)]

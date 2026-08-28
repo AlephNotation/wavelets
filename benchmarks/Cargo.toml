@@ -32,6 +32,10 @@ harness = false
 name = "throughput"
 harness = false
 
+[[bench]]
+name = "lattice"
+harness = false
+
 [[bin]]
 name = "profile"
 path = "src/bin/profile.rs"
@@ -41,6 +45,11 @@ bench = false
 [[bin]]
 name = "wavelets-compare-runner"
 path = "src/bin/wavelets_compare_runner.rs"
+bench = false
+
+[[bin]]
+name = "lattice-compare"
+path = "src/bin/lattice_compare.rs"
 bench = false
 
 # Keep benchmark-only dependencies out of the library package.

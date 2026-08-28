@@ -49,6 +49,20 @@ piecewise-constant and dense inputs. The dense cases are mandatory controls:
 they measure the event scan plus automatic SIMD fallback instead of reporting
 only the backend's favorable workload.
 
+The `lattice` group compares the normal planner with the generic direct kernel
+for the selected long orthogonal `f64` filters. On aarch64, the normal planner
+may use the conditioned paraunitary lattice backend once the interior is large
+enough; shorter transforms and other architectures retain the direct path. Run
+the paired diagnostic when tuning the crossover, since alternating both kernels
+inside one process is less sensitive to macOS core migration than independent
+Criterion groups:
+
+```text
+cargo bench --manifest-path benchmarks/Cargo.toml --bench lattice
+cargo run --release --manifest-path benchmarks/Cargo.toml \
+  --bin lattice-compare
+```
+
 For a wider diagnostic crossover matrix over precisions, long filters, lengths,
 run densities, and all boundary modes, run:
 

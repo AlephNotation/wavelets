@@ -71,6 +71,9 @@ mod boundary;
 mod coefficients;
 mod decomposition;
 mod error;
+mod lattice;
+#[cfg(target_arch = "aarch64")]
+mod lattice_coefficients;
 mod num;
 mod plan;
 mod simd;
