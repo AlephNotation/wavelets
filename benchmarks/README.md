@@ -144,9 +144,12 @@ every timing sample.
 
 The Python binding comparison imports both `wavelets_rs` and PyWavelets into
 the same CPython interpreter and passes the same NumPy inputs to each. This
-removes the language-boundary asymmetry from the native comparison above.
-Its canonical matrix includes db38/coif17 boundary-stress cases at lengths 16
-and 4,096 so long-filter edge execution remains visible in published results.
+removes the language-boundary asymmetry from the native comparison above. Its
+92-case canonical suite uses a deterministic dense signal and includes
+db38/coif17 boundary-stress cases at lengths 16 and 4,096. A separate 24-case
+structured long-filter suite compares dense controls, 64- and 256-sample
+constant runs, and complete constant signals for f64 db38/coif17 and f32
+coif17 under symmetric and antireflect extension.
 
 Create the development environment and build the extension from the repository
 root:
@@ -157,10 +160,13 @@ python/.venv/bin/python -m pip install -r python/requirements-dev.txt
 (cd python && .venv/bin/maturin develop --release)
 ```
 
-Run the complete canonical matrix:
+Run both suites, or select one explicitly:
 
 ```text
 python/.venv/bin/python benchmarks/compare/python_api.py
+python/.venv/bin/python benchmarks/compare/python_api.py --suite canonical
+python/.venv/bin/python benchmarks/compare/python_api.py \
+  --suite structured_long_filter
 ```
 
 Every case reports two `wavelets-rs` paths. `planned` reuses a plan, matching

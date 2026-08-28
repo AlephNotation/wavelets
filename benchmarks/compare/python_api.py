@@ -27,15 +27,18 @@ except ImportError as error:
         "wavelets_rs is not installed; run `maturin develop --release` from python/"
     ) from error
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HERE = Path(__file__).resolve().parent
 BENCHMARKS_DIR = HERE.parent
 MAX_BATCH_ITERATIONS = 100_000_000
+SUITES = ("all", "canonical", "structured_long_filter")
 
 
 def main() -> None:
     args = parse_args()
-    cases = native_compare.canonical_cases()
+    cases = python_api_cases()
+    if args.suite != "all":
+        cases = [case for case in cases if args.suite in case["suites"]]
     if args.case_filter:
         cases = [case for case in cases if args.case_filter in case["id"]]
     if not cases:
@@ -58,6 +61,7 @@ def main() -> None:
             "pywavelets_module": pywt.__version__,
         },
         "configuration": config,
+        "selection": {"suite": args.suite, "filter": args.case_filter},
         "methodology": {
             "process": "same CPython interpreter",
             "clock": "time.perf_counter_ns",
@@ -65,6 +69,12 @@ def main() -> None:
             "rust_planned": "canonical wavelet construction and planning outside timer",
             "rust_cold": "canonical wavelet construction and planning inside timer",
             "input_generation": "outside timer",
+            "signals": {
+                "dense": "deterministic sample-varying control",
+                "runs-64": "piecewise constant with 64-sample runs",
+                "runs-256": "piecewise constant with 256-sample runs",
+                "constant": "one constant value across the complete signal",
+            },
             "inverse_coefficient_generation": "outside timer",
             "engine_inputs": "same NumPy arrays for each engine",
             "output_materialization": "inside timer",
@@ -78,7 +88,7 @@ def main() -> None:
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")
-    print_results(results)
+    print_results(results, cases)
     print(f"\nRaw samples: {output}")
 
 
@@ -87,6 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument("--sample-ms", type=float, default=10.0)
     parser.add_argument("--warmup-batches", type=int, default=3)
+    parser.add_argument("--suite", choices=SUITES, default="all")
     parser.add_argument("--filter", dest="case_filter")
     parser.add_argument(
         "--output",
@@ -103,9 +114,63 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def python_api_cases() -> list[dict[str, Any]]:
+    cases = [
+        {**case, "suites": ["canonical"], "signal": "dense"}
+        for case in native_compare.canonical_cases()
+    ]
+    seen = {case["id"]: case for case in cases}
+
+    def add(dtype: str, wavelet: str, boundary: str, signal_kind: str) -> None:
+        case = {
+            "suites": ["structured_long_filter"],
+            "scope": "single_level",
+            "direction": "forward",
+            "dtype": dtype,
+            "wavelet": wavelet,
+            "boundary": boundary,
+            "len": 4_096,
+            "signal": signal_kind,
+        }
+        base_id = native_compare.case_id(case)
+        case["id"] = base_id if signal_kind == "dense" else f"{base_id}/{signal_kind}"
+        existing = seen.get(case["id"])
+        if existing is None:
+            seen[case["id"]] = case
+            cases.append(case)
+        else:
+            existing["suites"].append("structured_long_filter")
+
+    for dtype, wavelet in (("f64", "db38"), ("f64", "coif17"), ("f32", "coif17")):
+        for boundary in ("symmetric", "antireflect"):
+            for signal_kind in ("dense", "runs-64", "runs-256", "constant"):
+                add(dtype, wavelet, boundary, signal_kind)
+
+    return cases
+
+
+def benchmark_signal(
+    length: int, signal_kind: str, dtype: type[np.generic]
+) -> np.ndarray:
+    if signal_kind == "dense":
+        values = pywavelets_runner.signal(length)
+    elif signal_kind == "constant":
+        values = [1.25] * length
+    elif signal_kind.startswith("runs-"):
+        run_length = int(signal_kind.removeprefix("runs-"))
+        values = [
+            (((index // run_length * 17) % 257) - 128) / 64.0
+            + (((index // run_length) % 11) - 5) / 16.0
+            for index in range(length)
+        ]
+    else:
+        raise ValueError(f"unknown benchmark signal {signal_kind!r}")
+    return np.asarray(values, dtype=dtype)
+
+
 def run_case(case: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     dtype = np.float32 if case["dtype"] == "f32" else np.float64
-    values = np.asarray(pywavelets_runner.signal(case["len"]), dtype=dtype)
+    values = benchmark_signal(case["len"], case["signal"], dtype)
     wavelet = pywt.Wavelet(case["wavelet"])
     mode = case["boundary"]
 
@@ -268,9 +333,10 @@ def summarize(samples: list[float]) -> dict[str, float]:
     }
 
 
-def print_results(results: list[dict[str, Any]]) -> None:
+def print_results(results: list[dict[str, Any]], cases: list[dict[str, Any]]) -> None:
+    case_width = max(67, *(len(result["case_id"]) for result in results))
     print(
-        f"{'case':<67} {'planned':>12} {'cold':>12} {'PyWavelets':>12} "
+        f"{'case':<{case_width}} {'planned':>12} {'cold':>12} {'PyWavelets':>12} "
         f"{'planned x':>10} {'cold x':>8}"
     )
     for result in results:
@@ -278,12 +344,40 @@ def print_results(results: list[dict[str, Any]]) -> None:
         cold = result["wavelets_rs_cold"]["summary"]["median_ns"]
         pywavelets = result["pywavelets"]["summary"]["median_ns"]
         print(
-            f"{result['case_id']:<67} "
+            f"{result['case_id']:<{case_width}} "
             f"{native_compare.format_ns(planned):>12} "
             f"{native_compare.format_ns(cold):>12} "
             f"{native_compare.format_ns(pywavelets):>12} "
             f"{pywavelets / planned:>9.2f}x "
             f"{pywavelets / cold:>7.2f}x"
+        )
+
+    cases_by_id = {case["id"]: case for case in cases}
+    print("\nSuite summaries (PyWavelets time / wavelets-rs time):")
+    for suite in ("canonical", "structured_long_filter"):
+        suite_results = [
+            result
+            for result in results
+            if suite in cases_by_id[result["case_id"]]["suites"]
+        ]
+        if not suite_results:
+            continue
+        planned_ratios = [
+            result["pywavelets"]["summary"]["median_ns"]
+            / result["wavelets_rs_planned"]["summary"]["median_ns"]
+            for result in suite_results
+        ]
+        cold_ratios = [
+            result["pywavelets"]["summary"]["median_ns"]
+            / result["wavelets_rs_cold"]["summary"]["median_ns"]
+            for result in suite_results
+        ]
+        print(
+            f"  {suite}: {len(suite_results)} cases; planned "
+            f"{min(planned_ratios):.2f}x–{max(planned_ratios):.2f}x "
+            f"(median {statistics.median(planned_ratios):.2f}x), cold "
+            f"{min(cold_ratios):.2f}x–{max(cold_ratios):.2f}x "
+            f"(median {statistics.median(cold_ratios):.2f}x)"
         )
 
 

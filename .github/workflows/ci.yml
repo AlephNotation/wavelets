@@ -113,5 +113,6 @@ jobs:
           --samples 3
           --sample-ms 1
           --warmup-batches 1
-          --filter single_level/forward/f64/db4/symmetric/4096
+          --suite structured_long_filter
+          --filter single_level/forward/f64/db38/symmetric/4096/runs-64
           --output /tmp/wavelets-python-api-smoke.json
