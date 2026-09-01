@@ -94,9 +94,12 @@ representative runs spend time and allocate. A neutral in-process sampling
 harness compares both Rust execution APIs with PyWavelets and the genuinely
 compatible subset of GSL.
 
-Published Apple M4 Max/NEON and AMD Ryzen 7 8745HS/AVX-512 results are available
-with every raw timing sample and the exact source revision in
+Published Apple M4 Max/NEON, AMD Ryzen 7 8745HS/AVX-512, and AMD EPYC
+7R13/AVX2 results are available with every raw timing sample and the exact
+source revision in
 [benchmarks/results](benchmarks/results/README.md).
+
+<a id="python-to-python-api"></a>
 
 ### AMD Ryzen 7 8745HS / AVX-512
 
@@ -123,11 +126,32 @@ executor contributes to supported long f64 analysis filters. At 4,096 samples
 it is 1.55x–1.62x faster than the direct-equivalent production executor; at
 262,144 samples the gain reaches 2.05x–2.64x. The planner keeps the direct path
 for the measured 512- and 1,024-sample transforms and crosses over at 2,048.
-AVX2-only hardware remains to be measured.
 
 Raw reports:
 [Python API](benchmarks/results/amd-ryzen-7-8745hs-python-api.json) and
 [native lattice crossover](benchmarks/results/amd-ryzen-7-8745hs-lattice.csv).
+
+### AMD EPYC 7R13 / AVX2
+
+The AVX2-only report was replicated in three independent processes on an AWS
+`c6a.large`; the CPU exposed AVX2/FMA and no AVX-512. These are the median of
+the three process medians for 4,096-sample symmetric f64 forward transforms:
+
+| Wavelet | Transform | `wavelets-rs` reused plan | PyWavelets | Speedup |
+| --- | --- | ---: | ---: | ---: |
+| db4 | single level | 4.09 us | 14.99 us | 3.67x |
+| db20 | single level | 14.90 us | 90.93 us | 6.10x |
+| db38 | single level | 28.57 us | 177.61 us | 6.22x |
+| coif17 | single level | 39.61 us | 267.89 us | 6.76x |
+| db38 | multilevel | 69.45 us | 389.42 us | 5.61x |
+| coif17 | multilevel | 101.07 us | 587.96 us | 5.82x |
+
+Reused-plan execution wins all 92 canonical cases in every run, with a
+3.96x–4.02x median speedup. The structured long-filter median is
+7.21x–7.24x. All three complete reports are published:
+[run 1](benchmarks/results/amd-epyc-7r13-avx2-python-api-run-1.json),
+[run 2](benchmarks/results/amd-epyc-7r13-avx2-python-api-run-2.json), and
+[run 3](benchmarks/results/amd-epyc-7r13-avx2-python-api-run-3.json).
 
 ### Apple M4 Max / NEON: Python-to-Python API
 

@@ -45,6 +45,8 @@ All notable changes to `wavelets` are documented here.
   supported precisions for the qualifying long filters.
 - Published physical AMD Ryzen 7 8745HS/AVX-512 results with the complete
   112-case same-interpreter report and native lattice crossover matrix.
+- Published three independent AWS AMD EPYC 7R13/AVX2 same-interpreter reports,
+  including every raw sample and cross-process stability results.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 

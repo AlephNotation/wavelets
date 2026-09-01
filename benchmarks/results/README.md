@@ -204,8 +204,46 @@ The planner retains the direct executor through the measured 1,024-sample
 cases, then crosses over at 2,048 samples with a 1.23x–1.26x gain. The complete
 32-case matrix from 512 through 1,048,576 samples is in
 [amd-ryzen-7-8745hs-lattice.csv](amd-ryzen-7-8745hs-lattice.csv). AVX2-only
-hardware remains to be measured; the x86 lattice backend is currently selected
-only when AVX-512 is available.
+machines use the direct, butterfly, and adaptive annihilator executors because
+the x86 lattice backend is currently selected only when AVX-512 is available.
+
+## AMD EPYC 7R13 / AVX2
+
+Measured on an AWS `c6a.large` instance backed by an AMD EPYC 7R13 (Milan).
+The guest exposed AVX2 and FMA but no AVX-512. Each benchmark process was
+pinned to one vCPU. The reports use Ubuntu 24.04, Rust 1.98's release profile
+with no additional `RUSTFLAGS`, CPython 3.12.3, NumPy 2.5.2, and PyWavelets
+distribution 1.9.0 (whose module reports 1.8.0).
+
+Three independent same-interpreter runs were generated from clean commit
+`1fbba8f2eedf41dca688772faada04209b84ec40`. Each run contains 20 calibrated
+samples per engine after three warmup batches. The table reports the median of
+the three process medians for 4,096-sample symmetric-extension transforms:
+
+| Precision | Wavelet | Transform | `wavelets-rs` reused plan | PyWavelets | Py / Rust |
+| --- | --- | --- | ---: | ---: | ---: |
+| f64 | db4 | single forward | 4.09 us | 14.99 us | 3.67x |
+| f64 | db20 | single forward | 14.90 us | 90.93 us | 6.10x |
+| f64 | db38 | single forward | 28.57 us | 177.61 us | 6.22x |
+| f64 | coif17 | single forward | 39.61 us | 267.89 us | 6.76x |
+| f64 | db38 | multilevel forward | 69.45 us | 389.42 us | 5.61x |
+| f64 | coif17 | multilevel forward | 101.07 us | 587.96 us | 5.82x |
+
+Reused-plan execution wins all 92 canonical cases in every run. The canonical
+median speedup ranges from 3.96x to 4.02x across the three processes. Across
+the 24 structured long-filter cases, the median ranges from 7.21x to 7.24x and
+the complete observed range is 4.47x–11.57x.
+
+The plan-plus-execute canonical median ranges from 1.21x to 1.33x; its
+structured-suite median ranges from 2.11x to 2.28x. Long-filter planning is
+more process-layout-sensitive than execution: several individual planning
+medians changed by roughly 2x between the first and later processes while
+reused execution and PyWavelets remained stable. All three reports are
+published rather than selecting the most favorable process:
+
+- [run 1](amd-epyc-7r13-avx2-python-api-run-1.json)
+- [run 2](amd-epyc-7r13-avx2-python-api-run-2.json)
+- [run 3](amd-epyc-7r13-avx2-python-api-run-3.json)
 
 ## Reproduction
 
