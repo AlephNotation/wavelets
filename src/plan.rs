@@ -8,12 +8,13 @@ use fearless_simd::Level as SimdLevel;
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
 use crate::lattice::LatticeFilter;
 use crate::num::{
-    forward_butterfly_simd, forward_interior_simd, forward_lattice_simd, inverse_butterfly_simd,
-    inverse_linear_simd, inverse_periodized_simd, is_finite, mul_add,
+    forward_axis_simd, forward_butterfly_simd, forward_interior_simd, forward_lattice_simd,
+    inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd, inverse_periodized_simd,
+    is_finite, mul_add,
 };
 use crate::simd::{
-    AnalysisInterior, ButterflyAnalysis, ButterflySynthesis, LatticeAnalysis, LinearSynthesis,
-    MIN_LATTICE_OUTPUTS, PeriodizedInterior,
+    AnalysisInterior, AxisAnalysis, AxisSynthesis, ButterflyAnalysis, ButterflySynthesis,
+    LatticeAnalysis, LinearSynthesis, MIN_LATTICE_OUTPUTS, PeriodizedInterior,
 };
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
@@ -83,6 +84,36 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     ///
     /// Panics when any buffer violates those length requirements.
     fn inverse_into(&self, approx: &[T], detail: &[T], out: &mut [T], scratch: &mut [T]);
+
+    /// Computes one decomposition level over an axis of a contiguous tensor.
+    ///
+    /// The flat buffers are interpreted as `[outer, axis, inner]`, where the
+    /// planned signal length is the input axis extent and [`Self::coeff_len`]
+    /// is the output axis extent. This layout covers every axis of a
+    /// row-major contiguous tensor without transposing it.
+    fn forward_axis_into(
+        &self,
+        signal: &[T],
+        outer: usize,
+        inner: usize,
+        approx: &mut [T],
+        detail: &mut [T],
+        scratch: &mut [T],
+    );
+
+    /// Reconstructs an axis of a contiguous tensor.
+    ///
+    /// The coefficient buffers are interpreted as `[outer, coeff, inner]`
+    /// and `out` as `[outer, signal, inner]`.
+    fn inverse_axis_into(
+        &self,
+        approx: &[T],
+        detail: &[T],
+        outer: usize,
+        inner: usize,
+        out: &mut [T],
+        scratch: &mut [T],
+    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -497,19 +528,19 @@ fn factor_degree_zero<T: WaveletNum>(filter: &[T]) -> (T, Vec<T>) {
 }
 
 #[derive(Debug)]
-struct EdgePlan<T> {
+pub(crate) struct EdgePlan<T> {
     // Each row is the filter-composed finite-boundary transform for one
     // approximation/detail coefficient pair. Both channels share every input
     // load, and repeated references to the same finite sample are coalesced.
-    row_offsets: Box<[usize]>,
-    terms: Box<[EdgeTerm<T>]>,
+    pub(crate) row_offsets: Box<[usize]>,
+    pub(crate) terms: Box<[EdgeTerm<T>]>,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct EdgeTerm<T> {
-    input: usize,
-    low: T,
-    high: T,
+pub(crate) struct EdgeTerm<T> {
+    pub(crate) input: usize,
+    pub(crate) low: T,
+    pub(crate) high: T,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -996,6 +1027,295 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             self.inverse_periodized(layout, approx, detail, out);
         } else {
             self.inverse_linear(approx, detail, out);
+        }
+    }
+
+    fn forward_axis_into(
+        &self,
+        signal: &[T],
+        outer: usize,
+        inner: usize,
+        approx: &mut [T],
+        detail: &mut [T],
+        scratch: &mut [T],
+    ) {
+        assert_eq!(
+            signal.len(),
+            axis_buffer_len(outer, self.signal_len, inner),
+            "incorrect axis input length"
+        );
+        let output_len = axis_buffer_len(outer, self.coeff_len, inner);
+        assert_eq!(
+            approx.len(),
+            output_len,
+            "incorrect axis approximation length"
+        );
+        assert_eq!(detail.len(), output_len, "incorrect axis detail length");
+        assert!(
+            scratch.len() >= self.scratch_len(),
+            "scratch buffer is too small"
+        );
+
+        if inner == 1 {
+            for outer_index in 0..outer {
+                let signal_start = outer_index * self.signal_len;
+                let output_start = outer_index * self.coeff_len;
+                self.forward_into(
+                    &signal[signal_start..signal_start + self.signal_len],
+                    &mut approx[output_start..output_start + self.coeff_len],
+                    &mut detail[output_start..output_start + self.coeff_len],
+                    scratch,
+                );
+            }
+            return;
+        }
+
+        let (dec_lo, dec_hi) = self.filters.analysis();
+        let (interior_first_newest, interior_len) =
+            self.analysis.interior.as_ref().map_or((0, 0), |interior| {
+                (interior.first_newest, interior.output_len)
+            });
+        let vectorized = forward_axis_simd(
+            self.simd_level,
+            AxisAnalysis {
+                signal,
+                dec_lo,
+                dec_hi,
+                edge_row_offsets: &self.analysis.edges.row_offsets,
+                edge_terms: &self.analysis.edges.terms,
+                signal_len: self.signal_len,
+                coeff_len: self.coeff_len,
+                outer,
+                inner,
+                prefix_len: self.analysis.prefix_len,
+                interior_first_newest,
+                interior_len,
+            },
+            approx,
+            detail,
+        );
+        analyze_axis_tail(self, signal, outer, inner, vectorized, approx, detail);
+    }
+
+    fn inverse_axis_into(
+        &self,
+        approx: &[T],
+        detail: &[T],
+        outer: usize,
+        inner: usize,
+        out: &mut [T],
+        scratch: &mut [T],
+    ) {
+        let coefficient_len = axis_buffer_len(outer, self.coeff_len, inner);
+        assert_eq!(
+            approx.len(),
+            coefficient_len,
+            "incorrect axis approximation length"
+        );
+        assert_eq!(
+            detail.len(),
+            coefficient_len,
+            "incorrect axis detail length"
+        );
+        assert_eq!(
+            out.len(),
+            axis_buffer_len(outer, self.signal_len, inner),
+            "incorrect axis output length"
+        );
+        assert!(
+            scratch.len() >= self.scratch_len(),
+            "scratch buffer is too small"
+        );
+
+        if inner == 1 {
+            for outer_index in 0..outer {
+                let coeff_start = outer_index * self.coeff_len;
+                let output_start = outer_index * self.signal_len;
+                self.inverse_into(
+                    &approx[coeff_start..coeff_start + self.coeff_len],
+                    &detail[coeff_start..coeff_start + self.coeff_len],
+                    &mut out[output_start..output_start + self.signal_len],
+                    scratch,
+                );
+            }
+            return;
+        }
+
+        let (rec_lo, rec_hi) = self.filters.synthesis();
+        let vectorized = inverse_axis_simd(
+            self.simd_level,
+            AxisSynthesis {
+                approx,
+                detail,
+                rec_lo,
+                rec_hi,
+                signal_len: self.signal_len,
+                coeff_len: self.coeff_len,
+                outer,
+                inner,
+                periodized_initial: self
+                    .periodized_synthesis
+                    .map(|layout| layout.initial_coefficient),
+                periodized_phases_are_swapped: self
+                    .periodized_synthesis
+                    .is_some_and(|layout| layout.phases_are_swapped),
+            },
+            out,
+        );
+        synthesize_axis_tail(self, approx, detail, outer, inner, vectorized, out);
+    }
+}
+
+fn axis_buffer_len(outer: usize, axis: usize, inner: usize) -> usize {
+    outer
+        .checked_mul(axis)
+        .and_then(|value| value.checked_mul(inner))
+        .expect("axis buffer length overflow")
+}
+
+fn analyze_axis_tail<T: WaveletNum>(
+    plan: &PlannedDwt<T>,
+    signal: &[T],
+    outer: usize,
+    inner: usize,
+    first_lane: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let (dec_lo, dec_hi) = plan.filters.analysis();
+    let prefix_len = plan.analysis.prefix_len;
+    let interior_len = plan
+        .analysis
+        .interior
+        .as_ref()
+        .map_or(0, |interior| interior.output_len);
+    let interior_end = prefix_len + interior_len;
+
+    for outer_index in 0..outer {
+        let signal_start = outer_index * plan.signal_len * inner;
+        let output_start = outer_index * plan.coeff_len * inner;
+        for lane in first_lane..inner {
+            for output in 0..prefix_len {
+                let (low, high) = analyze_axis_edge_scalar(
+                    &signal[signal_start..],
+                    inner,
+                    lane,
+                    &plan.analysis.edges,
+                    output,
+                );
+                approx[output_start + output * inner + lane] = low;
+                detail[output_start + output * inner + lane] = high;
+            }
+
+            if let Some(interior) = &plan.analysis.interior {
+                for interior_output in 0..interior.output_len {
+                    let newest = interior.first_newest + 2 * interior_output;
+                    let mut low = T::zero();
+                    let mut high = T::zero();
+                    for tap in 0..dec_lo.len() {
+                        let sample = signal[signal_start + (newest - tap) * inner + lane];
+                        low = mul_add(sample, dec_lo[tap], low);
+                        high = mul_add(sample, dec_hi[tap], high);
+                    }
+                    let output = prefix_len + interior_output;
+                    approx[output_start + output * inner + lane] = low;
+                    detail[output_start + output * inner + lane] = high;
+                }
+            }
+
+            for output in interior_end..plan.coeff_len {
+                let edge_row = prefix_len + output - interior_end;
+                let (low, high) = analyze_axis_edge_scalar(
+                    &signal[signal_start..],
+                    inner,
+                    lane,
+                    &plan.analysis.edges,
+                    edge_row,
+                );
+                approx[output_start + output * inner + lane] = low;
+                detail[output_start + output * inner + lane] = high;
+            }
+        }
+    }
+}
+
+fn analyze_axis_edge_scalar<T: WaveletNum>(
+    signal: &[T],
+    inner: usize,
+    lane: usize,
+    edges: &EdgePlan<T>,
+    row: usize,
+) -> (T, T) {
+    let mut low = T::zero();
+    let mut high = T::zero();
+    for term in &edges.terms[edges.row_offsets[row]..edges.row_offsets[row + 1]] {
+        let sample = signal[term.input * inner + lane];
+        low = mul_add(sample, term.low, low);
+        high = mul_add(sample, term.high, high);
+    }
+    (low, high)
+}
+
+fn synthesize_axis_tail<T: WaveletNum>(
+    plan: &PlannedDwt<T>,
+    approx: &[T],
+    detail: &[T],
+    outer: usize,
+    inner: usize,
+    first_lane: usize,
+    out: &mut [T],
+) {
+    let (rec_lo, rec_hi) = plan.filters.synthesis();
+    let half_filter_len = rec_lo.len() / 2;
+    let (first_lo, second_lo) = rec_lo.split_at(half_filter_len);
+    let (first_hi, second_hi) = rec_hi.split_at(half_filter_len);
+    let output_pairs = plan.signal_len.div_ceil(2);
+
+    for outer_index in 0..outer {
+        let coeff_start = outer_index * plan.coeff_len * inner;
+        let output_start = outer_index * plan.signal_len * inner;
+        for lane in first_lane..inner {
+            for pair in 0..output_pairs {
+                let first_coefficient = plan
+                    .periodized_synthesis
+                    .map_or(pair + half_filter_len - 1, |layout| {
+                        (layout.initial_coefficient + pair) % plan.coeff_len
+                    });
+                let second_coefficient = if plan
+                    .periodized_synthesis
+                    .is_some_and(|layout| layout.phases_are_swapped)
+                {
+                    increment_wrapping(first_coefficient, plan.coeff_len)
+                } else {
+                    first_coefficient
+                };
+                let mut first = T::zero();
+                let mut second = T::zero();
+                for tap in 0..half_filter_len {
+                    let first_index = if plan.periodized_synthesis.is_some() {
+                        (first_coefficient + plan.coeff_len - tap % plan.coeff_len) % plan.coeff_len
+                    } else {
+                        first_coefficient - tap
+                    };
+                    let second_index = if plan.periodized_synthesis.is_some() {
+                        (second_coefficient + plan.coeff_len - tap % plan.coeff_len)
+                            % plan.coeff_len
+                    } else {
+                        second_coefficient - tap
+                    };
+                    let first_offset = coeff_start + first_index * inner + lane;
+                    let second_offset = coeff_start + second_index * inner + lane;
+                    first = mul_add(approx[first_offset], first_lo[tap], first);
+                    first = mul_add(detail[first_offset], first_hi[tap], first);
+                    second = mul_add(approx[second_offset], second_lo[tap], second);
+                    second = mul_add(detail[second_offset], second_hi[tap], second);
+                }
+                let first_output = output_start + 2 * pair * inner + lane;
+                out[first_output] = first;
+                if 2 * pair + 1 < plan.signal_len {
+                    out[first_output + inner] = second;
+                }
+            }
         }
     }
 }
@@ -1504,6 +1824,118 @@ mod tests {
         let first = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         let second = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn axis_execution_matches_independent_signal_execution() {
+        let boundaries = [
+            Boundary::Zero,
+            Boundary::Constant,
+            Boundary::Symmetric,
+            Boundary::Reflect,
+            Boundary::Periodic,
+            Boundary::Smooth,
+            Boundary::Antisymmetric,
+            Boundary::Antireflect,
+            Boundary::Periodization,
+        ];
+        let wavelets = [Wavelet::haar(), Wavelet::daubechies(4).unwrap()];
+
+        for signal_len in [2, 7, 32] {
+            for wavelet in &wavelets {
+                for &boundary in &boundaries {
+                    let plan =
+                        create_dwt_plan::<f64>(signal_len, wavelet, boundary, SimdLevel::new())
+                            .unwrap();
+                    let outer = 2;
+                    let inner = 5;
+                    let signal: Vec<_> = (0..outer * signal_len * inner)
+                        .map(|index| {
+                            let centered = (index * 37 + 11) % 101;
+                            (centered as f64 - 50.0) / 17.0
+                        })
+                        .collect();
+                    let mut actual_approx = vec![0.0; outer * plan.coeff_len * inner];
+                    let mut actual_detail = actual_approx.clone();
+                    plan.forward_axis_into(
+                        &signal,
+                        outer,
+                        inner,
+                        &mut actual_approx,
+                        &mut actual_detail,
+                        &mut [],
+                    );
+
+                    let mut expected_approx = actual_approx.clone();
+                    let mut expected_detail = actual_detail.clone();
+                    for outer_index in 0..outer {
+                        for lane in 0..inner {
+                            let row: Vec<_> = (0..signal_len)
+                                .map(|sample| {
+                                    signal[(outer_index * signal_len + sample) * inner + lane]
+                                })
+                                .collect();
+                            let (approx, detail) = plan.forward(&row);
+                            for coefficient in 0..plan.coeff_len {
+                                let output =
+                                    (outer_index * plan.coeff_len + coefficient) * inner + lane;
+                                expected_approx[output] = approx[coefficient];
+                                expected_detail[output] = detail[coefficient];
+                            }
+                        }
+                    }
+                    assert_slices_close(&actual_approx, &expected_approx, 2.0e-13);
+                    assert_slices_close(&actual_detail, &expected_detail, 2.0e-13);
+
+                    let mut actual_output = vec![0.0; signal.len()];
+                    plan.inverse_axis_into(
+                        &actual_approx,
+                        &actual_detail,
+                        outer,
+                        inner,
+                        &mut actual_output,
+                        &mut [],
+                    );
+                    let mut expected_output = actual_output.clone();
+                    for outer_index in 0..outer {
+                        for lane in 0..inner {
+                            let approx: Vec<_> = (0..plan.coeff_len)
+                                .map(|coefficient| {
+                                    actual_approx[(outer_index * plan.coeff_len + coefficient)
+                                        * inner
+                                        + lane]
+                                })
+                                .collect();
+                            let detail: Vec<_> = (0..plan.coeff_len)
+                                .map(|coefficient| {
+                                    actual_detail[(outer_index * plan.coeff_len + coefficient)
+                                        * inner
+                                        + lane]
+                                })
+                                .collect();
+                            let row = plan.inverse(&approx, &detail);
+                            for sample in 0..signal_len {
+                                expected_output
+                                    [(outer_index * signal_len + sample) * inner + lane] =
+                                    row[sample];
+                            }
+                        }
+                    }
+                    assert_slices_close(&actual_output, &expected_output, 2.0e-13);
+                }
+            }
+        }
+    }
+
+    fn assert_slices_close(actual: &[f64], expected: &[f64], tolerance: f64) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+            let error = (actual - expected).abs();
+            assert!(
+                error <= tolerance,
+                "value {index}: actual={actual:.17e}, expected={expected:.17e}, error={error:.3e}"
+            );
+        }
     }
 
     #[test]

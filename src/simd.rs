@@ -1,6 +1,7 @@
 use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 
 use crate::lattice::LatticeSection;
+use crate::plan::EdgeTerm;
 
 pub(crate) trait SimdSample<S: Simd>: SimdFloatElement {
     type Vector: SimdFloat<S, Element = Self>;
@@ -19,6 +20,34 @@ pub struct AnalysisInterior<'a, T> {
     pub(crate) dec_hi: &'a [T],
     pub(crate) signal: &'a [T],
     pub(crate) first_newest: usize,
+}
+
+pub struct AxisAnalysis<'a, T> {
+    pub(crate) signal: &'a [T],
+    pub(crate) dec_lo: &'a [T],
+    pub(crate) dec_hi: &'a [T],
+    pub(crate) edge_row_offsets: &'a [usize],
+    pub(crate) edge_terms: &'a [EdgeTerm<T>],
+    pub(crate) signal_len: usize,
+    pub(crate) coeff_len: usize,
+    pub(crate) outer: usize,
+    pub(crate) inner: usize,
+    pub(crate) prefix_len: usize,
+    pub(crate) interior_first_newest: usize,
+    pub(crate) interior_len: usize,
+}
+
+pub struct AxisSynthesis<'a, T> {
+    pub(crate) approx: &'a [T],
+    pub(crate) detail: &'a [T],
+    pub(crate) rec_lo: &'a [T],
+    pub(crate) rec_hi: &'a [T],
+    pub(crate) signal_len: usize,
+    pub(crate) coeff_len: usize,
+    pub(crate) outer: usize,
+    pub(crate) inner: usize,
+    pub(crate) periodized_initial: Option<usize>,
+    pub(crate) periodized_phases_are_swapped: bool,
 }
 
 pub struct ButterflyAnalysis<'a, T> {
@@ -84,6 +113,204 @@ pub struct PeriodizedInterior<'a, T> {
     pub(crate) detail: &'a [T],
     pub(crate) first_coefficient: usize,
     pub(crate) second_offset: usize,
+}
+
+#[inline(always)]
+fn analyze_axis_edge_row<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    signal: &[T],
+    inner: usize,
+    vectorized: usize,
+    terms: &[EdgeTerm<T>],
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let lanes = T::Vector::N;
+    for lane in (0..vectorized).step_by(lanes) {
+        let mut low = T::Vector::splat(simd, T::default());
+        let mut high = low;
+        for term in terms {
+            let offset = term.input * inner + lane;
+            let sample = T::Vector::from_slice(simd, &signal[offset..offset + lanes]);
+            low = sample.mul_add(term.low, low);
+            high = sample.mul_add(term.high, high);
+        }
+        low.store_slice(&mut approx[lane..lane + lanes]);
+        high.store_slice(&mut detail[lane..lane + lanes]);
+    }
+}
+
+#[inline(always)]
+fn analyze_axis_interior_row<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: &AxisAnalysis<'_, T>,
+    signal: &[T],
+    vectorized: usize,
+    newest: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let lanes = T::Vector::N;
+    for lane in (0..vectorized).step_by(lanes) {
+        let mut low = T::Vector::splat(simd, T::default());
+        let mut high = low;
+        for tap in 0..analysis.dec_lo.len() {
+            let offset = (newest - tap) * analysis.inner + lane;
+            let sample = T::Vector::from_slice(simd, &signal[offset..offset + lanes]);
+            low = sample.mul_add(analysis.dec_lo[tap], low);
+            high = sample.mul_add(analysis.dec_hi[tap], high);
+        }
+        low.store_slice(&mut approx[lane..lane + lanes]);
+        high.store_slice(&mut detail[lane..lane + lanes]);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn forward_axis<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized = analysis.inner - analysis.inner % lanes;
+    let interior_end = analysis.prefix_len + analysis.interior_len;
+
+    for outer in 0..analysis.outer {
+        let signal_start = outer * analysis.signal_len * analysis.inner;
+        let signal =
+            &analysis.signal[signal_start..signal_start + analysis.signal_len * analysis.inner];
+        let output_start = outer * analysis.coeff_len * analysis.inner;
+        let approx = &mut approx[output_start..output_start + analysis.coeff_len * analysis.inner];
+        let detail = &mut detail[output_start..output_start + analysis.coeff_len * analysis.inner];
+
+        for output in 0..analysis.prefix_len {
+            let term_start = analysis.edge_row_offsets[output];
+            let term_end = analysis.edge_row_offsets[output + 1];
+            let output_start = output * analysis.inner;
+            analyze_axis_edge_row(
+                simd,
+                signal,
+                analysis.inner,
+                vectorized,
+                &analysis.edge_terms[term_start..term_end],
+                &mut approx[output_start..output_start + analysis.inner],
+                &mut detail[output_start..output_start + analysis.inner],
+            );
+        }
+
+        for interior_output in 0..analysis.interior_len {
+            let output = analysis.prefix_len + interior_output;
+            let output_start = output * analysis.inner;
+            analyze_axis_interior_row(
+                simd,
+                &analysis,
+                signal,
+                vectorized,
+                analysis.interior_first_newest + 2 * interior_output,
+                &mut approx[output_start..output_start + analysis.inner],
+                &mut detail[output_start..output_start + analysis.inner],
+            );
+        }
+
+        for output in interior_end..analysis.coeff_len {
+            let edge_row = analysis.prefix_len + output - interior_end;
+            let term_start = analysis.edge_row_offsets[edge_row];
+            let term_end = analysis.edge_row_offsets[edge_row + 1];
+            let output_start = output * analysis.inner;
+            analyze_axis_edge_row(
+                simd,
+                signal,
+                analysis.inner,
+                vectorized,
+                &analysis.edge_terms[term_start..term_end],
+                &mut approx[output_start..output_start + analysis.inner],
+                &mut detail[output_start..output_start + analysis.inner],
+            );
+        }
+    }
+
+    vectorized
+}
+
+#[inline(always)]
+pub(crate) fn inverse_axis<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    synthesis: AxisSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized = synthesis.inner - synthesis.inner % lanes;
+    let half_filter_len = synthesis.rec_lo.len() / 2;
+    let (first_lo, second_lo) = synthesis.rec_lo.split_at(half_filter_len);
+    let (first_hi, second_hi) = synthesis.rec_hi.split_at(half_filter_len);
+    let output_pairs = synthesis.signal_len.div_ceil(2);
+
+    for outer in 0..synthesis.outer {
+        let coeff_start = outer * synthesis.coeff_len * synthesis.inner;
+        let coeff_end = coeff_start + synthesis.coeff_len * synthesis.inner;
+        let approx = &synthesis.approx[coeff_start..coeff_end];
+        let detail = &synthesis.detail[coeff_start..coeff_end];
+        let output_start = outer * synthesis.signal_len * synthesis.inner;
+        let out = &mut out[output_start..output_start + synthesis.signal_len * synthesis.inner];
+
+        for pair in 0..output_pairs {
+            let first_coefficient = synthesis
+                .periodized_initial
+                .map_or(pair + half_filter_len - 1, |initial| {
+                    (initial + pair) % synthesis.coeff_len
+                });
+            let second_coefficient = if synthesis.periodized_initial.is_some()
+                && synthesis.periodized_phases_are_swapped
+            {
+                (first_coefficient + 1) % synthesis.coeff_len
+            } else {
+                first_coefficient
+            };
+
+            for lane in (0..vectorized).step_by(lanes) {
+                let mut first = T::Vector::splat(simd, T::default());
+                let mut second = first;
+                for tap in 0..half_filter_len {
+                    let first_index = if synthesis.periodized_initial.is_some() {
+                        (first_coefficient + synthesis.coeff_len - tap % synthesis.coeff_len)
+                            % synthesis.coeff_len
+                    } else {
+                        first_coefficient - tap
+                    };
+                    let second_index = if synthesis.periodized_initial.is_some() {
+                        (second_coefficient + synthesis.coeff_len - tap % synthesis.coeff_len)
+                            % synthesis.coeff_len
+                    } else {
+                        second_coefficient - tap
+                    };
+                    let first_offset = first_index * synthesis.inner + lane;
+                    let second_offset = second_index * synthesis.inner + lane;
+                    let first_approx =
+                        T::Vector::from_slice(simd, &approx[first_offset..first_offset + lanes]);
+                    let first_detail =
+                        T::Vector::from_slice(simd, &detail[first_offset..first_offset + lanes]);
+                    let second_approx =
+                        T::Vector::from_slice(simd, &approx[second_offset..second_offset + lanes]);
+                    let second_detail =
+                        T::Vector::from_slice(simd, &detail[second_offset..second_offset + lanes]);
+                    first = first_approx.mul_add(first_lo[tap], first);
+                    first = first_detail.mul_add(first_hi[tap], first);
+                    second = second_approx.mul_add(second_lo[tap], second);
+                    second = second_detail.mul_add(second_hi[tap], second);
+                }
+
+                let first_output = 2 * pair * synthesis.inner + lane;
+                first.store_slice(&mut out[first_output..first_output + lanes]);
+                if 2 * pair + 1 < synthesis.signal_len {
+                    let second_output = first_output + synthesis.inner;
+                    second.store_slice(&mut out[second_output..second_output + lanes]);
+                }
+            }
+        }
+    }
+
+    vectorized
 }
 
 #[inline(always)]

@@ -24,7 +24,7 @@ impl<T: WaveletNum> LatticeFilter<T> {
         // particular, coif17's unnormalized cascade has too much intermediate
         // growth to opt f32 into the same representation without separate
         // evidence.
-        if size_of::<T>() != size_of::<f64>() || !wavelet.is_orthogonal() {
+        if size_of::<T>() != size_of::<f64>() || !has_orthogonal_analysis_bank(wavelet) {
             return None;
         }
         let factors = lattice_coefficients::analysis(wavelet.dec_lo())?;
@@ -41,6 +41,17 @@ impl<T: WaveletNum> LatticeFilter<T> {
             scale: T::from_f64(factors.scale),
         })
     }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+fn has_orthogonal_analysis_bank(wavelet: &Wavelet) -> bool {
+    wavelet
+        .dec_lo()
+        .iter()
+        .rev()
+        .zip(wavelet.dec_hi())
+        .enumerate()
+        .all(|(index, (&low, &high))| high == if index.is_multiple_of(2) { -low } else { low })
 }
 
 #[cfg(all(

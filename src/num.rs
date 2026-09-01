@@ -11,6 +11,19 @@ mod private {
 
         fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self;
 
+        fn forward_axis(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize;
+
+        fn inverse_axis(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize;
+
         fn forward_interior(
             level: Level,
             interior: crate::simd::AnalysisInterior<'_, Self>,
@@ -77,6 +90,27 @@ mod private {
         #[inline]
         fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
             value.mul_add(multiplier, accumulator)
+        }
+
+        #[inline]
+        fn forward_axis(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_axis(
+                simd, analysis, approx, detail
+            ))
+        }
+
+        #[inline]
+        fn inverse_axis(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
         }
 
         #[inline]
@@ -178,6 +212,27 @@ mod private {
         #[inline]
         fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
             value.mul_add(multiplier, accumulator)
+        }
+
+        #[inline]
+        fn forward_axis(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::forward_axis(
+                simd, analysis, approx, detail
+            ))
+        }
+
+        #[inline]
+        fn inverse_axis(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
         }
 
         #[inline]
@@ -304,6 +359,33 @@ pub(crate) fn mul_add<T: WaveletNum>(value: T, multiplier: T, accumulator: T) ->
 #[inline]
 pub(crate) fn is_finite<T: WaveletNum>(value: T) -> bool {
     <T as private::SimdKernels>::is_finite(value)
+}
+
+#[inline]
+pub(crate) fn forward_axis_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_axis(level, analysis, approx, detail)
+    }
+}
+
+#[inline]
+pub(crate) fn inverse_axis_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    synthesis: crate::simd::AxisSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::inverse_axis(level, synthesis, out)
+    }
 }
 
 #[inline]
