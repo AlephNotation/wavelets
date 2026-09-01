@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 
 use crate::lattice::LatticeSection;
@@ -234,7 +236,22 @@ pub(crate) fn forward_axis<S: Simd, T: SimdSample<S>>(
 }
 
 #[inline(always)]
-pub(crate) fn inverse_axis<S: Simd, T: SimdSample<S>>(
+pub(crate) fn inverse_axis_batched<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    synthesis: AxisSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    // AVX-512 and AArch64 both have enough vector registers for sixteen output
+    // accumulators. Narrower x86 backends use eight to avoid register spills.
+    if cfg!(target_arch = "aarch64") || size_of::<T::Vector>() >= 64 {
+        inverse_axis_linear_batched::<S, T, 8>(simd, synthesis, out)
+    } else {
+        inverse_axis_linear_batched::<S, T, 4>(simd, synthesis, out)
+    }
+}
+
+#[inline(always)]
+fn inverse_axis_linear_batched<S: Simd, T: SimdSample<S>, const PAIRS_PER_BATCH: usize>(
     simd: S,
     synthesis: AxisSynthesis<'_, T>,
     out: &mut [T],
@@ -246,6 +263,76 @@ pub(crate) fn inverse_axis<S: Simd, T: SimdSample<S>>(
     let (first_hi, second_hi) = synthesis.rec_hi.split_at(half_filter_len);
     let output_pairs = synthesis.signal_len.div_ceil(2);
 
+    for outer in 0..synthesis.outer {
+        let coeff_start = outer * synthesis.coeff_len * synthesis.inner;
+        let coeff_end = coeff_start + synthesis.coeff_len * synthesis.inner;
+        let approx = &synthesis.approx[coeff_start..coeff_end];
+        let detail = &synthesis.detail[coeff_start..coeff_end];
+        let output_start = outer * synthesis.signal_len * synthesis.inner;
+        let out = &mut out[output_start..output_start + synthesis.signal_len * synthesis.inner];
+
+        for batch_start in (0..output_pairs).step_by(PAIRS_PER_BATCH) {
+            let pairs = (output_pairs - batch_start).min(PAIRS_PER_BATCH);
+            let first_coefficient = batch_start + half_filter_len - 1;
+            let last_coefficient = first_coefficient + pairs - 1;
+
+            for lane in (0..vectorized).step_by(lanes) {
+                let zero = T::Vector::splat(simd, T::default());
+                let mut first = [zero; PAIRS_PER_BATCH];
+                let mut second = first;
+
+                for coefficient in (batch_start..=last_coefficient).rev() {
+                    let offset = coefficient * synthesis.inner + lane;
+                    let approx = T::Vector::from_slice(simd, &approx[offset..offset + lanes]);
+                    let detail = T::Vector::from_slice(simd, &detail[offset..offset + lanes]);
+
+                    for batch_pair in 0..pairs {
+                        let pair_coefficient = first_coefficient + batch_pair;
+                        if coefficient <= pair_coefficient {
+                            let tap = pair_coefficient - coefficient;
+                            if tap < half_filter_len {
+                                first[batch_pair] =
+                                    approx.mul_add(first_lo[tap], first[batch_pair]);
+                                first[batch_pair] =
+                                    detail.mul_add(first_hi[tap], first[batch_pair]);
+                                second[batch_pair] =
+                                    approx.mul_add(second_lo[tap], second[batch_pair]);
+                                second[batch_pair] =
+                                    detail.mul_add(second_hi[tap], second[batch_pair]);
+                            }
+                        }
+                    }
+                }
+
+                for batch_pair in 0..pairs {
+                    let pair = batch_start + batch_pair;
+                    let first_output = 2 * pair * synthesis.inner + lane;
+                    first[batch_pair].store_slice(&mut out[first_output..first_output + lanes]);
+                    if 2 * pair + 1 < synthesis.signal_len {
+                        let second_output = first_output + synthesis.inner;
+                        second[batch_pair]
+                            .store_slice(&mut out[second_output..second_output + lanes]);
+                    }
+                }
+            }
+        }
+    }
+
+    vectorized
+}
+
+#[inline(always)]
+pub(crate) fn inverse_axis<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    synthesis: AxisSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized = synthesis.inner - synthesis.inner % lanes;
+    let half_filter_len = synthesis.rec_lo.len() / 2;
+    let (first_lo, second_lo) = synthesis.rec_lo.split_at(half_filter_len);
+    let (first_hi, second_hi) = synthesis.rec_hi.split_at(half_filter_len);
+    let output_pairs = synthesis.signal_len.div_ceil(2);
     for outer in 0..synthesis.outer {
         let coeff_start = outer * synthesis.coeff_len * synthesis.inner;
         let coeff_end = coeff_start + synthesis.coeff_len * synthesis.inner;

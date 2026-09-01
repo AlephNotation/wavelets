@@ -9,8 +9,8 @@ use crate::decomposition::{Level, WavedecPlan, resolve_levels};
 use crate::lattice::LatticeFilter;
 use crate::num::{
     forward_axis_simd, forward_butterfly_simd, forward_interior_simd, forward_lattice_simd,
-    inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd, inverse_periodized_simd,
-    is_finite, mul_add,
+    inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd,
+    inverse_periodized_simd, is_finite, mul_add,
 };
 use crate::simd::{
     AnalysisInterior, AxisAnalysis, AxisSynthesis, ButterflyAnalysis, ButterflySynthesis,
@@ -551,6 +551,29 @@ struct PeriodizedSynthesis {
     phases_are_swapped: bool,
 }
 
+// Below 24 taps, reduced coefficient loads do not repay the batched kernel's
+// extra bookkeeping on the supported SIMD backends.
+const MIN_BATCHED_AXIS_HALF_FILTER_LEN: usize = 12;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AxisSynthesisKernel {
+    Direct,
+    Batched,
+}
+
+impl AxisSynthesisKernel {
+    fn select(signal_len: usize, filter_len: usize, periodized: bool) -> Self {
+        if !periodized
+            && filter_len / 2 >= MIN_BATCHED_AXIS_HALF_FILTER_LEN
+            && signal_len.div_ceil(2) >= 2
+        {
+            Self::Batched
+        } else {
+            Self::Direct
+        }
+    }
+}
+
 impl PeriodizedSynthesis {
     fn new(signal_len: usize, coeff_len: usize, filter_len: usize) -> Self {
         let half_filter_len = filter_len / 2;
@@ -690,6 +713,7 @@ pub(crate) struct PlannedDwt<T> {
     filters: PreparedFilterBank<T>,
     analysis: AnalysisPlan<T>,
     periodized_synthesis: Option<PeriodizedSynthesis>,
+    axis_synthesis_kernel: AxisSynthesisKernel,
     simd_level: SimdLevel,
 }
 
@@ -735,6 +759,8 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
         let periodized_synthesis = (boundary == Boundary::Periodization)
             .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
+        let axis_synthesis_kernel =
+            AxisSynthesisKernel::select(signal_len, filter_len, periodized_synthesis.is_some());
         let (dec_lo, dec_hi) = filters.analysis();
         let lattice = lattice_simd_supported(simd_level)
             .then(|| filters.analysis_lattice.clone())
@@ -762,6 +788,7 @@ impl<T: WaveletNum> PlannedDwt<T> {
             filters,
             analysis,
             periodized_synthesis,
+            axis_synthesis_kernel,
             simd_level,
         }
     }
@@ -1142,26 +1169,28 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
         }
 
         let (rec_lo, rec_hi) = self.filters.synthesis();
-        let vectorized = inverse_axis_simd(
-            self.simd_level,
-            AxisSynthesis {
-                approx,
-                detail,
-                rec_lo,
-                rec_hi,
-                signal_len: self.signal_len,
-                coeff_len: self.coeff_len,
-                outer,
-                inner,
-                periodized_initial: self
-                    .periodized_synthesis
-                    .map(|layout| layout.initial_coefficient),
-                periodized_phases_are_swapped: self
-                    .periodized_synthesis
-                    .is_some_and(|layout| layout.phases_are_swapped),
-            },
-            out,
-        );
+        let synthesis = AxisSynthesis {
+            approx,
+            detail,
+            rec_lo,
+            rec_hi,
+            signal_len: self.signal_len,
+            coeff_len: self.coeff_len,
+            outer,
+            inner,
+            periodized_initial: self
+                .periodized_synthesis
+                .map(|layout| layout.initial_coefficient),
+            periodized_phases_are_swapped: self
+                .periodized_synthesis
+                .is_some_and(|layout| layout.phases_are_swapped),
+        };
+        let vectorized = match self.axis_synthesis_kernel {
+            AxisSynthesisKernel::Direct => inverse_axis_simd(self.simd_level, synthesis, out),
+            AxisSynthesisKernel::Batched => {
+                inverse_axis_batched_simd(self.simd_level, synthesis, out)
+            }
+        };
         synthesize_axis_tail(self, approx, detail, outer, inner, vectorized, out);
     }
 }
@@ -1827,6 +1856,26 @@ mod tests {
     }
 
     #[test]
+    fn axis_synthesis_kernel_selection_follows_transform_geometry() {
+        assert_eq!(
+            AxisSynthesisKernel::select(16, 8, false),
+            AxisSynthesisKernel::Direct
+        );
+        assert_eq!(
+            AxisSynthesisKernel::select(2, 76, false),
+            AxisSynthesisKernel::Direct
+        );
+        assert_eq!(
+            AxisSynthesisKernel::select(16, 76, true),
+            AxisSynthesisKernel::Direct
+        );
+        assert_eq!(
+            AxisSynthesisKernel::select(16, 24, false),
+            AxisSynthesisKernel::Batched
+        );
+    }
+
+    #[test]
     fn axis_execution_matches_independent_signal_execution() {
         let boundaries = [
             Boundary::Zero,
@@ -1924,6 +1973,47 @@ mod tests {
                     assert_slices_close(&actual_output, &expected_output, 2.0e-13);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn batched_axis_inverse_matches_independent_signal_execution() {
+        let wavelet = Wavelet::daubechies(38).unwrap();
+        for boundary in [Boundary::Symmetric, Boundary::Periodization] {
+            let plan = create_dwt_plan::<f64>(16, &wavelet, boundary, SimdLevel::new()).unwrap();
+            let outer = 2;
+            let inner = 257;
+            let coefficient_count = outer * plan.coeff_len * inner;
+            let approx: Vec<_> = (0..coefficient_count)
+                .map(|index| ((index * 37 + 11) % 251) as f64 / 37.0 - 3.0)
+                .collect();
+            let detail: Vec<_> = (0..coefficient_count)
+                .map(|index| ((index * 41 + 17) % 241) as f64 / 41.0 - 2.5)
+                .collect();
+            let mut actual = vec![0.0; outer * plan.signal_len * inner];
+            plan.inverse_axis_into(&approx, &detail, outer, inner, &mut actual, &mut []);
+
+            let mut expected = actual.clone();
+            for outer_index in 0..outer {
+                for lane in 0..inner {
+                    let approx_row: Vec<_> = (0..plan.coeff_len)
+                        .map(|coefficient| {
+                            approx[(outer_index * plan.coeff_len + coefficient) * inner + lane]
+                        })
+                        .collect();
+                    let detail_row: Vec<_> = (0..plan.coeff_len)
+                        .map(|coefficient| {
+                            detail[(outer_index * plan.coeff_len + coefficient) * inner + lane]
+                        })
+                        .collect();
+                    let row = plan.inverse(&approx_row, &detail_row);
+                    for sample in 0..plan.signal_len {
+                        expected[(outer_index * plan.signal_len + sample) * inner + lane] =
+                            row[sample];
+                    }
+                }
+            }
+            assert_slices_close(&actual, &expected, 2.0e-13);
         }
     }
 

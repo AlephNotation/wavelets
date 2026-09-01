@@ -24,6 +24,12 @@ mod private {
             out: &mut [Self],
         ) -> usize;
 
+        fn inverse_axis_batched(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize;
+
         fn forward_interior(
             level: Level,
             interior: crate::simd::AnalysisInterior<'_, Self>,
@@ -111,6 +117,15 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_axis_batched(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_axis_batched(simd, synthesis, out))
         }
 
         #[inline]
@@ -233,6 +248,15 @@ mod private {
             out: &mut [Self],
         ) -> usize {
             dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
+        }
+
+        #[inline]
+        fn inverse_axis_batched(
+            level: Level,
+            synthesis: crate::simd::AxisSynthesis<'_, Self>,
+            out: &mut [Self],
+        ) -> usize {
+            dispatch!(level, simd => crate::simd::inverse_axis_batched(simd, synthesis, out))
         }
 
         #[inline]
@@ -385,6 +409,19 @@ pub(crate) fn inverse_axis_simd<T: WaveletNum>(
         0
     } else {
         <T as private::SimdKernels>::inverse_axis(level, synthesis, out)
+    }
+}
+
+#[inline]
+pub(crate) fn inverse_axis_batched_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    synthesis: crate::simd::AxisSynthesis<'_, T>,
+    out: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::inverse_axis_batched(level, synthesis, out)
     }
 }
 

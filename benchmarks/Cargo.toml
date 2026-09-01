@@ -36,6 +36,10 @@ harness = false
 name = "lattice"
 harness = false
 
+[[bench]]
+name = "axis"
+harness = false
+
 [[bin]]
 name = "profile"
 path = "src/bin/profile.rs"
