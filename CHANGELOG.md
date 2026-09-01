@@ -18,8 +18,8 @@ All notable changes to `wavelets` are documented here.
   and signal length.
 - Added safe PyO3/NumPy bindings for reusable single-level and multilevel
   `f32`/`f64` plans.
-- Added a same-interpreter Python benchmark that reports both reusable-plan and
-  cold plan-plus-execute performance against PyWavelets with raw samples.
+- Added a same-interpreter Python benchmark that reports both reused-plan and
+  plan-plus-execute performance against PyWavelets with raw samples.
 - Published the Apple M4 Max Python-to-Python comparison with both planning
   boundaries and all raw timing samples.
 - Compiled antireflect extension into constant-time affine sample rules,

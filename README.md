@@ -63,7 +63,7 @@ reconstructed = plan.inverse(approx, detail)
 ```
 
 Build and test it with the instructions in [python/README.md](python/README.md).
-The Python benchmark reports both reused-plan and cold plan-plus-execute
+The Python benchmark reports both reused-plan and plan-plus-execute
 timings, so an upstream backend discussion does not depend on hidden setup
 costs.
 
@@ -108,7 +108,7 @@ interpreter, using the same NumPy inputs and including output creation and
 destruction. These are 4,096-sample f64 forward transforms with symmetric
 extension:
 
-| Wavelet | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
+| Wavelet | Transform | `wavelets-rs` reused plan | `wavelets-rs` plan + execute | PyWavelets | Py / reused plan |
 | --- | --- | ---: | ---: | ---: | ---: |
 | db4 | single level | 2.13 us | 5.64 us | 10.55 us | 4.95x |
 | db20 | single level | 5.36 us | 43.22 us | 61.48 us | 11.47x |
@@ -117,8 +117,8 @@ extension:
 | db38 | multilevel | 30.58 us | 155.66 us | 261.36 us | 8.55x |
 | coif17 | multilevel | 45.84 us | 601.09 us | 386.16 us | 8.43x |
 
-The planned binding wins all 92 canonical cases, ranging from 3.21x to 13.88x
-with a 4.82x median. Across the 24-case long-filter structured suite it is
+The reused-plan binding wins all 92 canonical cases, ranging from 3.21x to
+13.88x with a 4.82x median. Across the 24-case long-filter structured suite it is
 5.66x to 13.45x faster, with a 12.72x median.
 
 The paired native diagnostic shows what the AVX-512 paraunitary lattice
@@ -157,14 +157,15 @@ Reused-plan execution wins all 92 canonical cases in every run, with a
 
 This comparison imports `wavelets_rs` and PyWavelets into the same CPython
 interpreter and passes the same NumPy arrays to both. Output creation and
-destruction are timed. `planned` reuses the intended `wavelets-rs` plan;
-`cold` also charges canonical wavelet construction and planning to every call.
+destruction are timed. `reused plan` reuses the intended `wavelets-rs` plan;
+`plan + execute` also charges canonical wavelet construction and planning to
+every call.
 PyWavelets receives a preconstructed `pywt.Wavelet`.
 
 Median end-to-end times for a 4,096-sample db4 transform with symmetric
 extension:
 
-| Precision | Transform | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| Precision | Transform | `wavelets-rs` reused plan | `wavelets-rs` plan + execute | PyWavelets | Py / reused plan | Py / plan + execute |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | f64 | single forward | 2.58 us | 4.84 us | 9.15 us | 3.55x | 1.89x |
 | f64 | single inverse | 2.48 us | 4.68 us | 5.93 us | 2.39x | 1.27x |
@@ -175,19 +176,19 @@ extension:
 | f32 | multilevel forward | 3.94 us | 12.21 us | 30.34 us | 7.70x | 2.48x |
 | f32 | multilevel inverse | 3.59 us | 11.82 us | 21.08 us | 5.87x | 1.78x |
 
-The planned binding wins all 92 canonical cases: 1.77x to 11.70x, with a 3.56x
-median. The deliberately conservative cold path wins 68 of 92 and has a 1.38x
-median; filter construction and boundary-row compilation dominate its short
-and long-filter losses.
+The reused-plan binding wins all 92 canonical cases: 1.77x to 11.70x, with a
+3.56x median. The deliberately conservative plan-plus-execute path wins 68 of
+92 and has a 1.38x median; filter construction and boundary-row compilation
+dominate its short- and long-filter losses.
 
-For 4,096-sample periodized multilevel Haar, the fused planned path takes 3.04
-us forward versus PyWavelets' 21.99 us (7.24x), and 3.43 us inverse versus
+For 4,096-sample periodized multilevel Haar, the fused reused-plan path takes
+3.04 us forward versus PyWavelets' 21.99 us (7.24x), and 3.43 us inverse versus
 16.56 us (4.83x).
 
 Long-filter f64 forward results show the compiled boundary rows together with
 the NEON paraunitary lattice backend:
 
-| Wavelet | Length | Boundary | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned |
+| Wavelet | Length | Boundary | `wavelets-rs` reused plan | `wavelets-rs` plan + execute | PyWavelets | Py / reused plan |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
 | db38 | 16 | symmetric | 510 ns | 13.49 us | 3.34 us | 6.54x |
 | db38 | 16 | antireflect | 524 ns | 23.70 us | 3.73 us | 7.12x |
@@ -198,14 +199,14 @@ the NEON paraunitary lattice backend:
 | coif17 | 4,096 | symmetric | 15.37 us | 50.49 us | 179.56 us | 11.68x |
 | coif17 | 4,096 | antireflect | 15.40 us | 60.25 us | 180.06 us | 11.70x |
 
-At 4,096 samples, planned multilevel forward transforms are 7.72x to 8.32x
+At 4,096 samples, reused-plan multilevel forward transforms are 7.72x to 8.32x
 faster than PyWavelets across these four long-filter boundary cases.
 
 Structured long-filter inputs expose the adaptive finite-difference backend.
 These 4,096-sample symmetric forward transforms include output allocation and
 exact structure discovery inside every timed call:
 
-| Precision | Wavelet | Input | `wavelets-rs` planned | `wavelets-rs` cold | PyWavelets | Py / planned | Py / cold |
+| Precision | Wavelet | Input | `wavelets-rs` reused plan | `wavelets-rs` plan + execute | PyWavelets | Py / reused plan | Py / plan + execute |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | f64 | db38 | dense control | 10.33 us | 30.21 us | 112.33 us | 10.88x | 3.72x |
 | f64 | db38 | runs of 64 | 10.79 us | 31.84 us | 112.74 us | 10.45x | 3.54x |
@@ -221,11 +222,11 @@ exact structure discovery inside every timed call:
 | f32 | coif17 | constant | 8.57 us | 43.62 us | 84.31 us | 9.84x | 1.93x |
 
 Across all 24 symmetric and antireflect structured-suite cases—including the
-dense controls—the planned binding wins by 5.75x to 20.95x with an 11.28x
-median. The cold path also wins every case, with a 3.15x median. Within the
-symmetric results, selecting the adaptive path for a constant input reduces
-`wavelets-rs` planned time by 1.22x for f64 db38, 1.79x for f64 coif17, and
-1.72x for f32 coif17 relative to each dense control.
+dense controls—the reused-plan binding wins by 5.75x to 20.95x with an 11.28x
+median. The plan-plus-execute path also wins every case, with a 3.15x median.
+Within the symmetric results, selecting the adaptive path for a constant input
+reduces `wavelets-rs` reused-plan time by 1.22x for f64 db38, 1.79x for f64
+coif17, and 1.72x for f32 coif17 relative to each dense control.
 
 ### Apple M4 Max / NEON: Native Rust API
 

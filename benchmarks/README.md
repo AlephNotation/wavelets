@@ -36,8 +36,9 @@ Daubechies, Symlet, Coiflet, biorthogonal, and reverse-biorthogonal filters, all
 boundary modes, and multilevel transforms. Planning has its own suite so setup
 cost is not mixed into execution cost.
 
-The planning suite also tracks cold db38/coif17 antireflect plans so the cost
-of compiling sparse edge rows remains visible alongside their execution wins.
+The planning suite also tracks db38/coif17 antireflect plan-plus-execute cases
+so the cost of compiling sparse edge rows remains visible alongside their
+execution wins.
 
 The `boundary_stress` group separately crosses short and representative signal
 lengths with db38/coif17 and symmetric/antireflect extension. It exists to keep
@@ -183,13 +184,13 @@ python/.venv/bin/python benchmarks/compare/python_api.py \
   --suite structured_long_filter
 ```
 
-Every case reports two `wavelets-rs` paths. `planned` reuses a plan, matching
-the package's intended repeated-transform API. `cold` constructs the wavelet
-and plan inside every timed call, providing a conservative bound for an
-uncached backend integration. PyWavelets receives a preconstructed
-`pywt.Wavelet`, as it would in a tuned application. All paths create their
-NumPy outputs inside the timer, and inverse cases pass the same PyWavelets
-coefficient arrays to both engines. The harness validates complete outputs
-before timing, calibrates each engine independently, rotates their execution
-order, and retains every raw sample in
+Every case reports two `wavelets-rs` paths. `reused plan` matches the package's
+intended repeated-transform API. `plan + execute` constructs the wavelet and
+plan inside every timed call, providing a conservative bound for an uncached
+backend integration. PyWavelets receives a preconstructed `pywt.Wavelet`, as it
+would in a tuned application. All paths create their NumPy outputs inside the
+timer, and inverse cases pass the same PyWavelets coefficient arrays to both
+engines. The harness validates complete outputs before timing, calibrates each
+engine independently, rotates their execution order, and retains every raw
+sample in
 `benchmarks/reports/python-api.json`.
