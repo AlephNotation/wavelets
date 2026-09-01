@@ -4,6 +4,14 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.7 - 2026-09-01
+
+- Added ordered boundary sample programs for scalar and contiguous-axis
+  transforms, preserving filter-tap accumulation order while retaining
+  coalesced sparse edge rows for batched SIMD axis execution.
+- Added a stability regression test for short `f32` signals transformed by
+  long filters with smooth extension.
+
 ## 0.1.0-alpha.6 - 2026-09-01
 
 - Batched neighboring output pairs during long-filter axis synthesis so loaded
