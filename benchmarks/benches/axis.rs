@@ -24,6 +24,47 @@ fn allocate_at_page_offset<T: WaveletNum>(len: usize, target: usize) -> (Vec<T>,
     (storage, start)
 }
 
+fn benchmark_axis_forward<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
+    const SIGNAL_LEN: usize = 256;
+    const INNER: usize = 256;
+
+    let mut group = criterion.benchmark_group(format!("axis_forward/{precision}"));
+    group.throughput(Throughput::Elements((SIGNAL_LEN * INNER) as u64));
+
+    for order in [4, 38] {
+        for (layout, offsets) in [("page-aliased", [16, 16, 16]), ("separated", [16, 80, 144])] {
+            let wavelet = Wavelet::daubechies(order).unwrap();
+            let mut planner = DwtPlanner::<T>::new();
+            let plan = planner
+                .plan_dwt(SIGNAL_LEN, &wavelet, Boundary::Symmetric)
+                .unwrap();
+            let input_len = SIGNAL_LEN * INNER;
+            let output_len = plan.coeff_len() * INNER;
+            let (mut input, input_start) = allocate_at_page_offset(input_len, offsets[0]);
+            input[input_start..input_start + input_len].copy_from_slice(&signal::<T>(input_len));
+            let (mut approx, approx_start) = allocate_at_page_offset(output_len, offsets[1]);
+            let (mut detail, detail_start) = allocate_at_page_offset(output_len, offsets[2]);
+            let mut scratch = vec![T::zero(); plan.scratch_len()];
+
+            group.bench_function(format!("db{order}/symmetric/256x256/{layout}"), |bencher| {
+                bencher.iter(|| {
+                    plan.forward_axis_into(
+                        black_box(&input[input_start..input_start + input_len]),
+                        1,
+                        INNER,
+                        &mut approx[approx_start..approx_start + output_len],
+                        &mut detail[detail_start..detail_start + output_len],
+                        &mut scratch,
+                    );
+                    black_box(&approx[approx_start..approx_start + output_len]);
+                    black_box(&detail[detail_start..detail_start + output_len]);
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 fn benchmark_axis_inverse<T: WaveletNum>(criterion: &mut Criterion, precision: &str) {
     const SIGNAL_LEN: usize = 16;
     const INNER: usize = 64 * 256;
@@ -72,6 +113,8 @@ fn benchmark_axis_inverse<T: WaveletNum>(criterion: &mut Criterion, precision: &
 }
 
 fn axis(criterion: &mut Criterion) {
+    benchmark_axis_forward::<f32>(criterion, "f32");
+    benchmark_axis_forward::<f64>(criterion, "f64");
     benchmark_axis_inverse::<f32>(criterion, "f32");
     benchmark_axis_inverse::<f64>(criterion, "f64");
 }
