@@ -18,6 +18,32 @@ mod private {
             detail: &mut [Self],
         ) -> usize;
 
+        fn forward_axis_fused4(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            let _ = level;
+            let _ = analysis;
+            let _ = approx;
+            let _ = detail;
+            0
+        }
+
+        fn forward_axis_fused8(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            let _ = level;
+            let _ = analysis;
+            let _ = approx;
+            let _ = detail;
+            0
+        }
+
         fn inverse_axis(
             level: Level,
             synthesis: crate::simd::AxisSynthesis<'_, Self>,
@@ -108,6 +134,27 @@ mod private {
             dispatch!(level, simd => crate::simd::forward_axis(
                 simd, analysis, approx, detail
             ))
+        }
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[inline]
+        fn forward_axis_fused4(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
+        }
+
+        #[inline]
+        fn forward_axis_fused8(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            crate::simd::axis_fusion::forward8(level, analysis, approx, detail)
         }
 
         #[inline]
@@ -239,6 +286,16 @@ mod private {
             dispatch!(level, simd => crate::simd::forward_axis(
                 simd, analysis, approx, detail
             ))
+        }
+
+        #[inline]
+        fn forward_axis_fused8(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            crate::simd::axis_fusion::forward8(level, analysis, approx, detail)
         }
 
         #[inline]
@@ -396,6 +453,35 @@ pub(crate) fn forward_axis_simd<T: WaveletNum>(
         0
     } else {
         <T as private::SimdKernels>::forward_axis(level, analysis, approx, detail)
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+pub(crate) fn forward_axis_fused4_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_axis_fused4(level, analysis, approx, detail)
+    }
+}
+
+#[inline]
+pub(crate) fn forward_axis_fused8_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_axis_fused8(level, analysis, approx, detail)
     }
 }
 

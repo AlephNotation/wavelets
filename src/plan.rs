@@ -7,10 +7,12 @@ use fearless_simd::Level as SimdLevel;
 
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
 use crate::lattice::LatticeFilter;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::num::forward_axis_fused4_simd;
 use crate::num::{
-    forward_axis_simd, forward_butterfly_simd, forward_interior_simd, forward_lattice_simd,
-    inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd,
-    inverse_periodized_simd, is_finite, mul_add,
+    forward_axis_fused8_simd, forward_axis_simd, forward_butterfly_simd, forward_interior_simd,
+    forward_lattice_simd, inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd,
+    inverse_linear_simd, inverse_periodized_simd, is_finite, mul_add,
 };
 use crate::simd::{
     AnalysisInterior, AxisAnalysis, AxisSynthesis, ButterflyAnalysis, ButterflySynthesis,
@@ -579,6 +581,49 @@ struct PeriodizedSynthesis {
 const MIN_BATCHED_AXIS_HALF_FILTER_LEN: usize = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AxisAnalysisKernel {
+    Direct,
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    Fused4,
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    Fused8,
+}
+
+impl AxisAnalysisKernel {
+    fn select(level: SimdLevel, filter_len: usize, sample_size: usize) -> Self {
+        let level = level.__dispatch_target();
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            if level.as_avx512().is_some() {
+                let minimum = if sample_size == size_of::<f32>() {
+                    24
+                } else {
+                    16
+                };
+                if filter_len >= minimum {
+                    return Self::Fused8;
+                }
+            } else if level.as_avx2().is_some()
+                && sample_size == size_of::<f32>()
+                && filter_len >= 32
+            {
+                return Self::Fused4;
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if level.as_neon().is_some() && filter_len >= 48 {
+            return Self::Fused8;
+        }
+
+        let _ = level;
+        let _ = sample_size;
+        Self::Direct
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AxisSynthesisKernel {
     Direct,
     Batched,
@@ -1124,31 +1169,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             return;
         }
 
-        let (dec_lo, dec_hi) = self.filters.analysis();
-        let (interior_first_newest, interior_len) =
-            self.analysis.interior.as_ref().map_or((0, 0), |interior| {
-                (interior.first_newest, interior.output_len)
-            });
-        let vectorized = forward_axis_simd(
-            self.simd_level,
-            AxisAnalysis {
-                signal,
-                dec_lo,
-                dec_hi,
-                edge_row_offsets: &self.analysis.edges.row_offsets,
-                edge_terms: &self.analysis.edges.terms,
-                signal_len: self.signal_len,
-                coeff_len: self.coeff_len,
-                outer,
-                inner,
-                prefix_len: self.analysis.prefix_len,
-                interior_first_newest,
-                interior_len,
-            },
-            approx,
-            detail,
-        );
-        analyze_axis_tail(self, signal, outer, inner, vectorized, approx, detail);
+        analyze_batched_axis(self, signal, outer, inner, approx, detail);
     }
 
     fn inverse_axis_into(
@@ -1227,6 +1248,50 @@ fn axis_buffer_len(outer: usize, axis: usize, inner: usize) -> usize {
         .checked_mul(axis)
         .and_then(|value| value.checked_mul(inner))
         .expect("axis buffer length overflow")
+}
+
+#[inline(never)]
+fn analyze_batched_axis<T: WaveletNum>(
+    plan: &PlannedDwt<T>,
+    signal: &[T],
+    outer: usize,
+    inner: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let (dec_lo, dec_hi) = plan.filters.analysis();
+    let (interior_first_newest, interior_len) =
+        plan.analysis.interior.as_ref().map_or((0, 0), |interior| {
+            (interior.first_newest, interior.output_len)
+        });
+    let analysis = AxisAnalysis {
+        signal,
+        dec_lo,
+        dec_hi,
+        edge_row_offsets: &plan.analysis.edges.row_offsets,
+        edge_terms: &plan.analysis.edges.terms,
+        signal_len: plan.signal_len,
+        coeff_len: plan.coeff_len,
+        outer,
+        inner,
+        prefix_len: plan.analysis.prefix_len,
+        interior_first_newest,
+        interior_len,
+    };
+    let axis_analysis_kernel =
+        AxisAnalysisKernel::select(plan.simd_level, dec_lo.len(), size_of::<T>());
+    let vectorized = match axis_analysis_kernel {
+        AxisAnalysisKernel::Direct => forward_axis_simd(plan.simd_level, analysis, approx, detail),
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        AxisAnalysisKernel::Fused4 => {
+            forward_axis_fused4_simd(plan.simd_level, analysis, approx, detail)
+        }
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+        AxisAnalysisKernel::Fused8 => {
+            forward_axis_fused8_simd(plan.simd_level, analysis, approx, detail)
+        }
+    };
+    analyze_axis_tail(plan, signal, outer, inner, vectorized, approx, detail);
 }
 
 fn analyze_axis_tail<T: WaveletNum>(
@@ -1986,6 +2051,167 @@ mod tests {
         let first = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         let second = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn axis_analysis_kernel_selection_follows_dispatch_backend() {
+        let level = SimdLevel::new();
+        assert_eq!(
+            AxisAnalysisKernel::select(level, 8, size_of::<f32>()),
+            AxisAnalysisKernel::Direct
+        );
+        assert_eq!(
+            AxisAnalysisKernel::select(level, 8, size_of::<f64>()),
+            AxisAnalysisKernel::Direct
+        );
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_eq!(
+                AxisAnalysisKernel::select(level, 48, size_of::<f64>()),
+                AxisAnalysisKernel::Fused8
+            );
+        }
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            let dispatch = level.__dispatch_target();
+            if dispatch.as_avx512().is_some() {
+                assert_eq!(
+                    AxisAnalysisKernel::select(level, 24, size_of::<f32>()),
+                    AxisAnalysisKernel::Fused8
+                );
+                assert_eq!(
+                    AxisAnalysisKernel::select(level, 16, size_of::<f64>()),
+                    AxisAnalysisKernel::Fused8
+                );
+            } else if dispatch.as_avx2().is_some() {
+                assert_eq!(
+                    AxisAnalysisKernel::select(level, 32, size_of::<f32>()),
+                    AxisAnalysisKernel::Fused4
+                );
+                assert_eq!(
+                    AxisAnalysisKernel::select(level, 102, size_of::<f64>()),
+                    AxisAnalysisKernel::Direct
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fused_axis_analysis_is_bit_exact_with_direct_analysis() {
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_fused_axis_analysis_matches_direct::<f32>(AxisAnalysisKernel::Fused8);
+            assert_fused_axis_analysis_matches_direct::<f64>(AxisAnalysisKernel::Fused8);
+        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            let level = SimdLevel::new().__dispatch_target();
+            if level.as_avx512().is_some() {
+                assert_fused_axis_analysis_matches_direct::<f32>(AxisAnalysisKernel::Fused8);
+                assert_fused_axis_analysis_matches_direct::<f64>(AxisAnalysisKernel::Fused8);
+            } else if level.as_avx2().is_some() {
+                assert_fused_axis_analysis_matches_direct::<f32>(AxisAnalysisKernel::Fused4);
+            }
+        }
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    fn assert_fused_axis_analysis_matches_direct<T: WaveletNum>(kernel: AxisAnalysisKernel) {
+        let wavelet = Wavelet::daubechies(38).unwrap();
+        let outer = 2;
+        let inner = 19;
+        let signal_len = 256;
+        let signal: Vec<_> = (0..outer * signal_len * inner)
+            .map(|index| T::from_f64(((index * 37 + 11) % 251) as f64 / 37.0 - 3.0))
+            .collect();
+
+        for boundary in [
+            Boundary::Zero,
+            Boundary::Constant,
+            Boundary::Symmetric,
+            Boundary::Reflect,
+            Boundary::Periodic,
+            Boundary::Smooth,
+            Boundary::Antisymmetric,
+            Boundary::Antireflect,
+            Boundary::Periodization,
+        ] {
+            let plan =
+                create_dwt_plan::<T>(signal_len, &wavelet, boundary, SimdLevel::new()).unwrap();
+
+            let output_len = outer * plan.coeff_len * inner;
+            let mut expected_approx = vec![T::zero(); output_len];
+            let mut expected_detail = vec![T::zero(); output_len];
+            execute_axis_analysis_kernel(
+                &plan,
+                &signal,
+                outer,
+                inner,
+                &mut expected_approx,
+                &mut expected_detail,
+                AxisAnalysisKernel::Direct,
+            );
+            let mut actual_approx = vec![T::zero(); output_len];
+            let mut actual_detail = vec![T::zero(); output_len];
+            execute_axis_analysis_kernel(
+                &plan,
+                &signal,
+                outer,
+                inner,
+                &mut actual_approx,
+                &mut actual_detail,
+                kernel,
+            );
+
+            assert_eq!(actual_approx, expected_approx, "{boundary:?} approximation");
+            assert_eq!(actual_detail, expected_detail, "{boundary:?} detail");
+        }
+    }
+
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    fn execute_axis_analysis_kernel<T: WaveletNum>(
+        plan: &PlannedDwt<T>,
+        signal: &[T],
+        outer: usize,
+        inner: usize,
+        approx: &mut [T],
+        detail: &mut [T],
+        kernel: AxisAnalysisKernel,
+    ) {
+        let (dec_lo, dec_hi) = plan.filters.analysis();
+        let (interior_first_newest, interior_len) =
+            plan.analysis.interior.as_ref().map_or((0, 0), |interior| {
+                (interior.first_newest, interior.output_len)
+            });
+        let analysis = AxisAnalysis {
+            signal,
+            dec_lo,
+            dec_hi,
+            edge_row_offsets: &plan.analysis.edges.row_offsets,
+            edge_terms: &plan.analysis.edges.terms,
+            signal_len: plan.signal_len,
+            coeff_len: plan.coeff_len,
+            outer,
+            inner,
+            prefix_len: plan.analysis.prefix_len,
+            interior_first_newest,
+            interior_len,
+        };
+        let vectorized = match kernel {
+            AxisAnalysisKernel::Direct => {
+                forward_axis_simd(plan.simd_level, analysis, approx, detail)
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            AxisAnalysisKernel::Fused4 => {
+                forward_axis_fused4_simd(plan.simd_level, analysis, approx, detail)
+            }
+            AxisAnalysisKernel::Fused8 => {
+                forward_axis_fused8_simd(plan.simd_level, analysis, approx, detail)
+            }
+        };
+        analyze_axis_tail(plan, signal, outer, inner, vectorized, approx, detail);
     }
 
     #[test]

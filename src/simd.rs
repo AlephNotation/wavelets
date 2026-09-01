@@ -5,6 +5,8 @@ use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 use crate::lattice::LatticeSection;
 use crate::plan::EdgeTerm;
 
+pub(crate) mod axis_fusion;
+
 pub(crate) trait SimdSample<S: Simd>: SimdFloatElement {
     type Vector: SimdFloat<S, Element = Self>;
 }
@@ -168,7 +170,130 @@ fn analyze_axis_interior_row<S: Simd, T: SimdSample<S>>(
 }
 
 #[inline(always)]
+fn analyze_axis_interior_rows<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: &AxisAnalysis<'_, T>,
+    signal: &[T],
+    vectorized: usize,
+    outputs: std::ops::Range<usize>,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    for interior_output in outputs {
+        let output = analysis.prefix_len + interior_output;
+        let output_start = output * analysis.inner;
+        analyze_axis_interior_row(
+            simd,
+            analysis,
+            signal,
+            vectorized,
+            analysis.interior_first_newest + 2 * interior_output,
+            &mut approx[output_start..output_start + analysis.inner],
+            &mut detail[output_start..output_start + analysis.inner],
+        );
+    }
+}
+
+#[inline(always)]
+fn analyze_axis_interior_batches<S: Simd, T: SimdSample<S>, const OUTPUTS_PER_BATCH: usize>(
+    simd: S,
+    analysis: &AxisAnalysis<'_, T>,
+    signal: &[T],
+    vectorized: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let batched_outputs = analysis.interior_len - analysis.interior_len % OUTPUTS_PER_BATCH;
+    for first_output in (0..batched_outputs).step_by(OUTPUTS_PER_BATCH) {
+        analyze_axis_interior_batch::<S, T, OUTPUTS_PER_BATCH>(
+            simd,
+            analysis,
+            signal,
+            vectorized,
+            first_output,
+            approx,
+            detail,
+        );
+    }
+    analyze_axis_interior_rows(
+        simd,
+        analysis,
+        signal,
+        vectorized,
+        batched_outputs..analysis.interior_len,
+        approx,
+        detail,
+    );
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn analyze_axis_interior_batch<S: Simd, T: SimdSample<S>, const OUTPUTS_PER_BATCH: usize>(
+    simd: S,
+    analysis: &AxisAnalysis<'_, T>,
+    signal: &[T],
+    vectorized: usize,
+    first_output: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+) {
+    let lanes = T::Vector::N;
+    let first_newest = analysis.interior_first_newest + 2 * first_output;
+    let last_newest = first_newest + 2 * (OUTPUTS_PER_BATCH - 1);
+    let first_input = first_newest + 1 - analysis.dec_lo.len();
+
+    for lane in (0..vectorized).step_by(lanes) {
+        let zero = T::Vector::splat(simd, T::default());
+        let mut low = [zero; OUTPUTS_PER_BATCH];
+        let mut high = low;
+
+        for input in (first_input..=last_newest).rev() {
+            let offset = input * analysis.inner + lane;
+            let sample = T::Vector::from_slice(simd, &signal[offset..offset + lanes]);
+
+            for output in 0..OUTPUTS_PER_BATCH {
+                let newest = first_newest + 2 * output;
+                if input <= newest {
+                    let tap = newest - input;
+                    if tap < analysis.dec_lo.len() {
+                        low[output] = sample.mul_add(analysis.dec_lo[tap], low[output]);
+                        high[output] = sample.mul_add(analysis.dec_hi[tap], high[output]);
+                    }
+                }
+            }
+        }
+
+        for output in 0..OUTPUTS_PER_BATCH {
+            let output_start =
+                (analysis.prefix_len + first_output + output) * analysis.inner + lane;
+            low[output].store_slice(&mut approx[output_start..output_start + lanes]);
+            high[output].store_slice(&mut detail[output_start..output_start + lanes]);
+        }
+    }
+}
+
+#[inline(always)]
 pub(crate) fn forward_axis<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    forward_axis_with_batch::<S, T, 1>(simd, analysis, approx, detail)
+}
+
+#[inline(always)]
+pub(crate) fn forward_axis_fused<S: Simd, T: SimdSample<S>, const OUTPUTS_PER_BATCH: usize>(
+    simd: S,
+    analysis: AxisAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    forward_axis_with_batch::<S, T, OUTPUTS_PER_BATCH>(simd, analysis, approx, detail)
+}
+
+#[inline(always)]
+fn forward_axis_with_batch<S: Simd, T: SimdSample<S>, const OUTPUTS_PER_BATCH: usize>(
     simd: S,
     analysis: AxisAnalysis<'_, T>,
     approx: &mut [T],
@@ -201,17 +326,19 @@ pub(crate) fn forward_axis<S: Simd, T: SimdSample<S>>(
             );
         }
 
-        for interior_output in 0..analysis.interior_len {
-            let output = analysis.prefix_len + interior_output;
-            let output_start = output * analysis.inner;
-            analyze_axis_interior_row(
+        if OUTPUTS_PER_BATCH == 1 {
+            analyze_axis_interior_rows(
                 simd,
                 &analysis,
                 signal,
                 vectorized,
-                analysis.interior_first_newest + 2 * interior_output,
-                &mut approx[output_start..output_start + analysis.inner],
-                &mut detail[output_start..output_start + analysis.inner],
+                0..analysis.interior_len,
+                approx,
+                detail,
+            );
+        } else {
+            analyze_axis_interior_batches::<S, T, OUTPUTS_PER_BATCH>(
+                simd, &analysis, signal, vectorized, approx, detail,
             );
         }
 
