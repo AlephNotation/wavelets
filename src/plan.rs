@@ -534,6 +534,7 @@ pub(crate) struct EdgePlan<T> {
     // load, and repeated references to the same finite sample are coalesced.
     pub(crate) row_offsets: Box<[usize]>,
     pub(crate) terms: Box<[EdgeTerm<T>]>,
+    ordered_rules: Box<[SampleRule<T>]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -541,6 +542,28 @@ pub(crate) struct EdgeTerm<T> {
     pub(crate) input: usize,
     pub(crate) low: T,
     pub(crate) high: T,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SampleRule<T> {
+    Zero,
+    Direct {
+        index: usize,
+        negative: bool,
+    },
+    Smooth {
+        edge: usize,
+        neighbor: usize,
+        distance: usize,
+    },
+    Linear2 {
+        indices: [usize; 2],
+        weights: [T; 2],
+    },
+    Linear3 {
+        indices: [usize; 3],
+        weights: [T; 3],
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -954,6 +977,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             signal,
             &self.analysis.edges,
             0,
+            dec_lo,
+            dec_hi,
             &mut approx[..prefix_len],
             &mut detail[..prefix_len],
         );
@@ -1030,6 +1055,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             signal,
             &self.analysis.edges,
             prefix_len,
+            dec_lo,
+            dec_hi,
             &mut approx[suffix_start..],
             &mut detail[suffix_start..],
         );
@@ -1231,6 +1258,8 @@ fn analyze_axis_tail<T: WaveletNum>(
                     lane,
                     &plan.analysis.edges,
                     output,
+                    dec_lo,
+                    dec_hi,
                 );
                 approx[output_start + output * inner + lane] = low;
                 detail[output_start + output * inner + lane] = high;
@@ -1260,6 +1289,8 @@ fn analyze_axis_tail<T: WaveletNum>(
                     lane,
                     &plan.analysis.edges,
                     edge_row,
+                    dec_lo,
+                    dec_hi,
                 );
                 approx[output_start + output * inner + lane] = low;
                 detail[output_start + output * inner + lane] = high;
@@ -1274,15 +1305,16 @@ fn analyze_axis_edge_scalar<T: WaveletNum>(
     lane: usize,
     edges: &EdgePlan<T>,
     row: usize,
+    dec_lo: &[T],
+    dec_hi: &[T],
 ) -> (T, T) {
-    let mut low = T::zero();
-    let mut high = T::zero();
-    for term in &edges.terms[edges.row_offsets[row]..edges.row_offsets[row + 1]] {
-        let sample = signal[term.input * inner + lane];
-        low = mul_add(sample, term.low, low);
-        high = mul_add(sample, term.high, high);
-    }
-    (low, high)
+    let start = row * dec_lo.len();
+    analyze_edge_rules(
+        &edges.ordered_rules[start..start + dec_lo.len()],
+        dec_lo,
+        dec_hi,
+        |input| signal[input * inner + lane],
+    )
 }
 
 fn synthesize_axis_tail<T: WaveletNum>(
@@ -1568,6 +1600,7 @@ fn build_analysis<T: WaveletNum>(
     let edge_count = prefix_end + coeff_len - interior_end;
     let mut row_offsets = Vec::with_capacity(edge_count + 1);
     let mut terms = Vec::<EdgeTerm<T>>::with_capacity(edge_count * filter_len);
+    let mut ordered_rules = Vec::with_capacity(edge_count * filter_len);
     // A dense position map avoids hashing when it is no larger than the raw
     // edge-rule grid. Large signals retain an O(filter_len) sparse planner.
     let dense_position_limit = edge_count.saturating_mul(filter_len);
@@ -1584,48 +1617,45 @@ fn build_analysis<T: WaveletNum>(
         let row_start = terms.len();
         let newest = (2 * coefficient + phase) as isize;
         for tap in 0..filter_len {
-            for_each_extension_term(
-                newest - tap as isize,
-                signal_len,
-                boundary,
-                |input, weight| {
-                    let low = dec_lo[tap] * weight;
-                    let high = dec_hi[tap] * weight;
-                    let position = if let Some(positions) = &mut dense_positions {
-                        let position = positions[input];
-                        if position != usize::MAX && position >= row_start {
-                            Some(position)
-                        } else {
-                            positions[input] = terms.len();
-                            None
-                        }
+            let extended_index = newest - tap as isize;
+            ordered_rules.push(extension_rule::<T>(extended_index, signal_len, boundary));
+            for_each_extension_term(extended_index, signal_len, boundary, |input, weight| {
+                let low = dec_lo[tap] * weight;
+                let high = dec_hi[tap] * weight;
+                let position = if let Some(positions) = &mut dense_positions {
+                    let position = positions[input];
+                    if position != usize::MAX && position >= row_start {
+                        Some(position)
                     } else {
-                        let positions = sparse_positions
-                            .as_mut()
-                            .expect("one edge position map is always available");
-                        if let Some(&position) = positions.get(&input) {
-                            Some(position)
-                        } else {
-                            positions.insert(input, terms.len());
-                            None
-                        }
-                    };
-                    if let Some(position) = position {
-                        terms[position].low += low;
-                        terms[position].high += high;
-                    } else {
-                        terms.push(EdgeTerm { input, low, high });
+                        positions[input] = terms.len();
+                        None
                     }
-                },
-            );
+                } else {
+                    let positions = sparse_positions
+                        .as_mut()
+                        .expect("one edge position map is always available");
+                    if let Some(&position) = positions.get(&input) {
+                        Some(position)
+                    } else {
+                        positions.insert(input, terms.len());
+                        None
+                    }
+                };
+                if let Some(position) = position {
+                    terms[position].low += low;
+                    terms[position].high += high;
+                } else {
+                    terms.push(EdgeTerm { input, low, high });
+                }
+            });
         }
         row_offsets.push(terms.len());
     }
-
     AnalysisPlan {
         edges: EdgePlan {
             row_offsets: row_offsets.into_boxed_slice(),
             terms: terms.into_boxed_slice(),
+            ordered_rules: ordered_rules.into_boxed_slice(),
         },
         prefix_len: prefix_end,
         interior: interior_start.map(|start| InteriorAnalysis {
@@ -1678,6 +1708,8 @@ fn analyze_edges<T: WaveletNum>(
     signal: &[T],
     edges: &EdgePlan<T>,
     first_row: usize,
+    dec_lo: &[T],
+    dec_hi: &[T],
     approx: &mut [T],
     detail: &mut [T],
 ) {
@@ -1686,15 +1718,116 @@ fn analyze_edges<T: WaveletNum>(
     for (row, (approximation, detail)) in
         (first_row..).zip(approx.iter_mut().zip(detail.iter_mut()))
     {
-        let mut low = T::zero();
-        let mut high = T::zero();
-        for term in &edges.terms[edges.row_offsets[row]..edges.row_offsets[row + 1]] {
-            let sample = signal[term.input];
-            low += term.low * sample;
-            high += term.high * sample;
+        let start = row * dec_lo.len();
+        (*approximation, *detail) = analyze_edge_rules(
+            &edges.ordered_rules[start..start + dec_lo.len()],
+            dec_lo,
+            dec_hi,
+            |input| signal[input],
+        );
+    }
+}
+
+#[inline]
+fn analyze_edge_rules<T: WaveletNum>(
+    rules: &[SampleRule<T>],
+    dec_lo: &[T],
+    dec_hi: &[T],
+    mut sample: impl FnMut(usize) -> T,
+) -> (T, T) {
+    debug_assert_eq!(rules.len(), dec_lo.len());
+    debug_assert_eq!(rules.len(), dec_hi.len());
+    let mut low = T::zero();
+    let mut high = T::zero();
+    for (tap, rule) in rules.iter().copied().enumerate() {
+        let sample = evaluate_sample(rule, &mut sample);
+        low += dec_lo[tap] * sample;
+        high += dec_hi[tap] * sample;
+    }
+    (low, high)
+}
+
+fn extension_rule<T: WaveletNum>(
+    index: isize,
+    signal_len: usize,
+    boundary: Boundary,
+) -> SampleRule<T> {
+    if (0..signal_len as isize).contains(&index) {
+        return SampleRule::Direct {
+            index: index as usize,
+            negative: false,
+        };
+    }
+
+    if boundary == Boundary::Smooth {
+        if signal_len == 1 {
+            return SampleRule::Direct {
+                index: 0,
+                negative: false,
+            };
         }
-        *approximation = low;
-        *detail = high;
+        return SampleRule::Smooth {
+            edge: if index < 0 { 0 } else { signal_len - 1 },
+            neighbor: if index < 0 { 1 } else { signal_len - 2 },
+            distance: if index < 0 {
+                (-index) as usize
+            } else {
+                (index - (signal_len - 1) as isize) as usize
+            },
+        };
+    }
+
+    let mut indices = [0; 3];
+    let mut weights = [T::zero(); 3];
+    let mut len = 0;
+    for_each_extension_term(index, signal_len, boundary, |input, weight| {
+        indices[len] = input;
+        weights[len] = weight;
+        len += 1;
+    });
+    match len {
+        0 => SampleRule::Zero,
+        1 if weights[0] == T::from_f64(1.0) => SampleRule::Direct {
+            index: indices[0],
+            negative: false,
+        },
+        1 if weights[0] == T::from_f64(-1.0) => SampleRule::Direct {
+            index: indices[0],
+            negative: true,
+        },
+        2 => SampleRule::Linear2 {
+            indices: [indices[0], indices[1]],
+            weights: [weights[0], weights[1]],
+        },
+        3 => SampleRule::Linear3 { indices, weights },
+        _ => unreachable!("one extension sample has at most three finite terms"),
+    }
+}
+
+#[inline]
+fn evaluate_sample<T: WaveletNum>(rule: SampleRule<T>, sample: &mut impl FnMut(usize) -> T) -> T {
+    match rule {
+        SampleRule::Zero => T::zero(),
+        SampleRule::Direct { index, negative } => {
+            let value = sample(index);
+            if negative { T::zero() - value } else { value }
+        }
+        SampleRule::Smooth {
+            edge,
+            neighbor,
+            distance,
+        } => {
+            let edge = sample(edge);
+            edge + T::from_f64(distance as f64) * (edge - sample(neighbor))
+        }
+        SampleRule::Linear2 { indices, weights } => {
+            sample(indices[0]) * weights[0] + sample(indices[1]) * weights[1]
+        }
+        SampleRule::Linear3 { indices, weights } => {
+            sample(indices[0]) * weights[0]
+                + sample(indices[1]) * weights[1]
+                + sample(indices[2]) * weights[2]
+        }
     }
 }
 
@@ -1873,6 +2006,24 @@ mod tests {
             AxisSynthesisKernel::select(16, 24, false),
             AxisSynthesisKernel::Batched
         );
+    }
+
+    #[test]
+    fn f32_long_filter_smooth_round_trip_remains_stable() {
+        let wavelet = Wavelet::daubechies(28).unwrap();
+        let plan = create_dwt_plan::<f32>(4, &wavelet, Boundary::Smooth, SimdLevel::new()).unwrap();
+        let signal = [0.595_544_7, 0.964_514_5, 0.653_177_1, 0.748_906_6];
+        let (approx, detail) = plan.forward(&signal);
+        let reconstructed = plan.inverse(&approx, &detail);
+        let mean_squared_error = signal
+            .iter()
+            .zip(&reconstructed)
+            .map(|(expected, actual)| (expected - actual).powi(2))
+            .sum::<f32>()
+            / signal.len() as f32;
+        let rms = mean_squared_error.sqrt();
+
+        assert!(rms < 6.0e-7, "f32 round-trip RMS was {rms:e}");
     }
 
     #[test]
