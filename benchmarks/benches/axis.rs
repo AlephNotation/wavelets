@@ -31,10 +31,7 @@ fn benchmark_axis_inverse<T: WaveletNum>(criterion: &mut Criterion, precision: &
     let mut group = criterion.benchmark_group(format!("axis_inverse/{precision}"));
     group.throughput(Throughput::Elements((SIGNAL_LEN * INNER) as u64));
 
-    for (layout, offsets) in [
-        ("page-aliased", [16, 16, 16]),
-        ("separated", [16, 80, 144]),
-    ] {
+    for (layout, offsets) in [("page-aliased", [16, 16, 16]), ("separated", [16, 80, 144])] {
         let wavelet = Wavelet::daubechies(38).unwrap();
         let mut planner = DwtPlanner::<T>::new();
         let plan = planner
