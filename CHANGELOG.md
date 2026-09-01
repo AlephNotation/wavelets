@@ -4,6 +4,13 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.6 - 2026-09-01
+
+- Batched neighboring output pairs during long-filter axis synthesis so loaded
+  coefficient vectors are reused across outputs, eliminating the severe
+  cache-aliasing regression observed in leading-axis `db38` reconstruction.
+- Added page-offset regression benchmarks for allocation-free axis synthesis.
+
 ## 0.1.0-alpha.5 - 2026-09-01
 
 - Audited and documented the public API before the first beta.
