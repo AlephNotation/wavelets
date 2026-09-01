@@ -4,6 +4,8 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.5 - 2026-09-01
+
 - Audited and documented the public API before the first beta.
 - Added `Display` for `Wavelet` and mutable contiguous coefficient access with
   `Decomposition::as_mut_slice`.
@@ -47,6 +49,9 @@ All notable changes to `wavelets` are documented here.
   112-case same-interpreter report and native lattice crossover matrix.
 - Published three independent AWS AMD EPYC 7R13/AVX2 same-interpreter reports,
   including every raw sample and cross-process stability results.
+- Added allocation-free batched axis transforms over contiguous tensors, with
+  safe SIMD execution across independent inner-axis lanes and compiled boundary
+  handling for all nine extension modes.
 
 ## 0.1.0-alpha.4 - 2026-08-27
 
