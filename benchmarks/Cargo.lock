@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "wavelets"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "fearless_simd",
 ]

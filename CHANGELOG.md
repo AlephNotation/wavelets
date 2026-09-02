@@ -4,6 +4,20 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.8 - 2026-09-01
+
+- Added `Dwt::axis_scratch_len` so callers can plan the exact reusable scratch
+  required by a tensor geometry while keeping axis execution allocation-free.
+- Added cost-selected fused forward-axis kernels that reuse loaded samples
+  across neighboring outputs on AVX-512, AVX2, and NEON, including a dedicated
+  AVX2 `f64` crossover.
+- Added packed contiguous-row analysis so last-axis transforms can batch
+  independent rows through the same SIMD axis executor without transposing.
+- Measured and encoded separate fusion and row-packing crossovers by precision
+  and ISA, with Criterion coverage around the AVX2 `f64` thresholds.
+- Made lattice planning respect fearless_simd's normalized dispatch target so
+  builds with AVX-512 multiversioning disabled select a genuinely AVX2 plan.
+
 ## 0.1.0-alpha.7 - 2026-09-01
 
 - Added ordered boundary sample programs for scalar and contiguous-axis
