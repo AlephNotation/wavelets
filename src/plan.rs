@@ -39,6 +39,15 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     /// Returns the minimum scratch-buffer length.
     fn scratch_len(&self) -> usize;
 
+    /// Returns the scratch-buffer length required for an axis transform.
+    ///
+    /// This may exceed [`Self::scratch_len`] when the tensor geometry allows
+    /// independent contiguous signals to be packed into SIMD lanes. Callers
+    /// that reuse an axis geometry can allocate this buffer once.
+    fn axis_scratch_len(&self, _outer: usize, _inner: usize) -> usize {
+        self.scratch_len()
+    }
+
     /// Allocates and computes `(approximation, detail)` coefficients.
     ///
     /// # Panics
@@ -92,7 +101,8 @@ pub trait Dwt<T: WaveletNum>: Send + Sync {
     /// The flat buffers are interpreted as `[outer, axis, inner]`, where the
     /// planned signal length is the input axis extent and [`Self::coeff_len`]
     /// is the output axis extent. This layout covers every axis of a
-    /// row-major contiguous tensor without transposing it.
+    /// row-major contiguous tensor. `scratch` must contain at least
+    /// [`Self::axis_scratch_len`] elements for this geometry.
     fn forward_axis_into(
         &self,
         signal: &[T],
@@ -589,6 +599,73 @@ enum AxisAnalysisKernel {
     Fused8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AxisRowBatch {
+    width: usize,
+}
+
+impl AxisRowBatch {
+    fn select(
+        level: SimdLevel,
+        filter_len: usize,
+        sample_size: usize,
+        outer: usize,
+        inner: usize,
+    ) -> Option<Self> {
+        if inner != 1 {
+            return None;
+        }
+
+        let level = level.__dispatch_target();
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let (width, minimum_filter_len) = if level.as_avx512().is_some() {
+            (64 / sample_size, 32)
+        } else if level.as_avx2().is_some() {
+            let minimum = if sample_size == size_of::<f32>() {
+                32
+            } else {
+                48
+            };
+            (32 / sample_size, minimum)
+        } else {
+            return None;
+        };
+        #[cfg(target_arch = "aarch64")]
+        let (width, minimum_filter_len) = if level.as_neon().is_some() {
+            let minimum = if sample_size == size_of::<f32>() {
+                32
+            } else {
+                48
+            };
+            (16 / sample_size, minimum)
+        } else {
+            return None;
+        };
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+        return None;
+
+        if filter_len < minimum_filter_len {
+            return None;
+        }
+
+        // A tile spans several vectors to amortize packing and executor setup.
+        // It remains small enough that the db38 working set stays cache-local.
+        let width = width * 8;
+        (outer >= width).then_some(Self { width })
+    }
+
+    fn scratch_len(self, signal_len: usize, coeff_len: usize) -> usize {
+        signal_len
+            .checked_add(
+                coeff_len
+                    .checked_mul(2)
+                    .expect("axis scratch length overflow"),
+            )
+            .and_then(|per_lane| per_lane.checked_mul(self.width))
+            .expect("axis scratch length overflow")
+    }
+}
+
 impl AxisAnalysisKernel {
     fn select(level: SimdLevel, filter_len: usize, sample_size: usize) -> Self {
         let level = level.__dispatch_target();
@@ -996,6 +1073,24 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
         0
     }
 
+    fn axis_scratch_len(&self, outer: usize, inner: usize) -> usize {
+        AxisRowBatch::select(
+            self.simd_level,
+            self.filters.filter_len,
+            size_of::<T>(),
+            outer,
+            inner,
+        )
+        .map_or_else(
+            || self.scratch_len(),
+            |batch| {
+                self.scratch_len()
+                    .checked_add(batch.scratch_len(self.signal_len, self.coeff_len))
+                    .expect("axis scratch length overflow")
+            },
+        )
+    }
+
     fn forward_into(&self, signal: &[T], approx: &mut [T], detail: &mut [T], scratch: &mut [T]) {
         assert_eq!(signal.len(), self.signal_len, "incorrect signal length");
         assert_eq!(
@@ -1151,9 +1246,20 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
         );
         assert_eq!(detail.len(), output_len, "incorrect axis detail length");
         assert!(
-            scratch.len() >= self.scratch_len(),
+            scratch.len() >= self.axis_scratch_len(outer, inner),
             "scratch buffer is too small"
         );
+
+        if let Some(batch) = AxisRowBatch::select(
+            self.simd_level,
+            self.filters.filter_len,
+            size_of::<T>(),
+            outer,
+            inner,
+        ) {
+            analyze_packed_rows(self, batch, signal, outer, approx, detail, scratch);
+            return;
+        }
 
         if inner == 1 {
             for outer_index in 0..outer {
@@ -1248,6 +1354,61 @@ fn axis_buffer_len(outer: usize, axis: usize, inner: usize) -> usize {
         .checked_mul(axis)
         .and_then(|value| value.checked_mul(inner))
         .expect("axis buffer length overflow")
+}
+
+fn analyze_packed_rows<T: WaveletNum>(
+    plan: &PlannedDwt<T>,
+    batch: AxisRowBatch,
+    signal: &[T],
+    outer: usize,
+    approx: &mut [T],
+    detail: &mut [T],
+    scratch: &mut [T],
+) {
+    let scratch = &mut scratch[plan.scratch_len()..];
+    let packed_signal_len = plan
+        .signal_len
+        .checked_mul(batch.width)
+        .expect("axis scratch length overflow");
+    let packed_band_len = plan
+        .coeff_len
+        .checked_mul(batch.width)
+        .expect("axis scratch length overflow");
+    let (packed_signal, scratch) = scratch.split_at_mut(packed_signal_len);
+    let (packed_approx, packed_detail) = scratch.split_at_mut(packed_band_len);
+    let packed_detail = &mut packed_detail[..packed_band_len];
+
+    for first_row in (0..outer).step_by(batch.width) {
+        let rows = (outer - first_row).min(batch.width);
+        if rows < batch.width {
+            packed_signal.fill(T::zero());
+        }
+
+        for sample in 0..plan.signal_len {
+            let packed = &mut packed_signal[sample * batch.width..(sample + 1) * batch.width];
+            for lane in 0..rows {
+                packed[lane] = signal[(first_row + lane) * plan.signal_len + sample];
+            }
+        }
+
+        analyze_batched_axis(
+            plan,
+            packed_signal,
+            1,
+            batch.width,
+            packed_approx,
+            packed_detail,
+        );
+
+        for coefficient in 0..plan.coeff_len {
+            let packed_start = coefficient * batch.width;
+            for lane in 0..rows {
+                let output = (first_row + lane) * plan.coeff_len + coefficient;
+                approx[output] = packed_approx[packed_start + lane];
+                detail[output] = packed_detail[packed_start + lane];
+            }
+        }
+    }
 }
 
 #[inline(never)]
@@ -2391,6 +2552,83 @@ mod tests {
                 }
             }
             assert_slices_close(&actual, &expected, 2.0e-13);
+        }
+    }
+
+    #[test]
+    fn packed_row_analysis_matches_independent_signal_execution() {
+        // The packed executor intentionally uses the same tap-order reduction
+        // as non-contiguous axis execution. The independent 1-D kernel uses
+        // separate even/odd accumulators, so cancellation-heavy f32 boundary
+        // rows differ within the normal FIR rounding envelope.
+        assert_packed_rows_match::<f32>(|value| value as f64, 3.0e-5, 2.0e-6);
+        assert_packed_rows_match::<f64>(|value| value, 2.0e-13, 2.0e-13);
+    }
+
+    fn assert_packed_rows_match<T: WaveletNum>(
+        to_f64: fn(T) -> f64,
+        absolute_tolerance: f64,
+        relative_tolerance: f64,
+    ) {
+        let level = SimdLevel::new();
+        let wavelet = Wavelet::daubechies(38).unwrap();
+        let Some(batch) =
+            AxisRowBatch::select(level, wavelet.filter_len(), size_of::<T>(), usize::MAX, 1)
+        else {
+            return;
+        };
+        let outer = batch.width + 3;
+
+        for boundary in [
+            Boundary::Zero,
+            Boundary::Constant,
+            Boundary::Symmetric,
+            Boundary::Reflect,
+            Boundary::Periodic,
+            Boundary::Smooth,
+            Boundary::Antisymmetric,
+            Boundary::Antireflect,
+            Boundary::Periodization,
+        ] {
+            let plan = create_dwt_plan::<T>(64, &wavelet, boundary, level).unwrap();
+            let signal: Vec<_> = (0..outer * plan.signal_len)
+                .map(|index| {
+                    let centered = (index * 37 + 11) % 101;
+                    T::from_f64((centered as f64 - 50.0) / 17.0)
+                })
+                .collect();
+            let mut actual_approx = vec![T::zero(); outer * plan.coeff_len];
+            let mut actual_detail = actual_approx.clone();
+            let mut scratch = vec![T::zero(); plan.axis_scratch_len(outer, 1)];
+            plan.forward_axis_into(
+                &signal,
+                outer,
+                1,
+                &mut actual_approx,
+                &mut actual_detail,
+                &mut scratch,
+            );
+
+            for row in 0..outer {
+                let input = &signal[row * plan.signal_len..(row + 1) * plan.signal_len];
+                let (expected_approx, expected_detail) = plan.forward(input);
+                for coefficient in 0..plan.coeff_len {
+                    let output = row * plan.coeff_len + coefficient;
+                    for (actual, expected) in [
+                        (actual_approx[output], expected_approx[coefficient]),
+                        (actual_detail[output], expected_detail[coefficient]),
+                    ] {
+                        let actual = to_f64(actual);
+                        let expected = to_f64(expected);
+                        let error = (actual - expected).abs();
+                        assert!(
+                            error <= absolute_tolerance + relative_tolerance * expected.abs(),
+                            "{boundary:?}, row {row}, coefficient {coefficient}: \
+                             actual={actual:.17e}, expected={expected:.17e}, error={error:.3e}"
+                        );
+                    }
+                }
+            }
         }
     }
 

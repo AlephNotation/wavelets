@@ -43,13 +43,13 @@ fn planned_axis_forward_and_inverse_do_not_allocate() {
     let wavelet = Wavelet::daubechies(38).unwrap();
     let mut planner = DwtPlanner::<f64>::new();
     let plan = planner.plan_dwt(64, &wavelet, Boundary::Symmetric).unwrap();
-    let outer = 4;
-    let inner = 257;
+    let outer = 33;
+    let inner = 1;
     let signal = vec![1.0; outer * plan.signal_len() * inner];
     let mut approx = vec![0.0; outer * plan.coeff_len() * inner];
     let mut detail = approx.clone();
     let mut reconstructed = vec![0.0; signal.len()];
-    let mut scratch = vec![0.0; plan.scratch_len()];
+    let mut scratch = vec![0.0; plan.axis_scratch_len(outer, inner)];
 
     allocation_counter::measure(|| {});
     let allocations = allocation_counter::measure(|| {

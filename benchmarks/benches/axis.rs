@@ -30,7 +30,7 @@ fn benchmark_axis_forward<T: WaveletNum>(criterion: &mut Criterion, precision: &
     let mut group = criterion.benchmark_group(format!("axis_forward/{precision}"));
     group.throughput(Throughput::Elements((SIGNAL_LEN * 256) as u64));
 
-    for order in [4, 38] {
+    for order in [4, 16, 38] {
         for (axis, outer, inner) in [("axis0", 1, 256), ("last-axis", 256, 1)] {
             for (layout, offsets) in [("page-aliased", [16, 16, 16]), ("separated", [16, 80, 144])]
             {
@@ -46,7 +46,7 @@ fn benchmark_axis_forward<T: WaveletNum>(criterion: &mut Criterion, precision: &
                     .copy_from_slice(&signal::<T>(input_len));
                 let (mut approx, approx_start) = allocate_at_page_offset(output_len, offsets[1]);
                 let (mut detail, detail_start) = allocate_at_page_offset(output_len, offsets[2]);
-                let mut scratch = vec![T::zero(); plan.scratch_len()];
+                let mut scratch = vec![T::zero(); plan.axis_scratch_len(outer, inner)];
 
                 group.bench_function(
                     format!("db{order}/symmetric/256x256/{axis}/{layout}"),
