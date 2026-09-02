@@ -2879,54 +2879,40 @@ mod tests {
         let db20 = equivalent_custom_wavelet(&Wavelet::daubechies(20).unwrap());
         let db38 = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
         let coif17 = equivalent_custom_wavelet(&Wavelet::coiflet(17).unwrap());
-        let short =
-            create_dwt_plan::<f64>(4_096, &db20, Boundary::Symmetric, SimdLevel::new()).unwrap();
-        let long =
-            create_dwt_plan::<f64>(4_096, &db38, Boundary::Symmetric, SimdLevel::new()).unwrap();
+        let short = PreparedFilterBank::<f64>::new(&db20, false);
+        let long = PreparedFilterBank::<f64>::new(&db38, false);
 
-        assert!(short.analysis.annihilator.is_none());
-        assert!(long.analysis.annihilator.is_some());
+        assert!(short.analysis_annihilator.is_none());
+        assert!(long.analysis_annihilator.is_some());
 
-        let f32_db38 =
-            create_dwt_plan::<f32>(4_096, &db38, Boundary::Symmetric, SimdLevel::new()).unwrap();
-        let f32_coif17 =
-            create_dwt_plan::<f32>(4_096, &coif17, Boundary::Symmetric, SimdLevel::new()).unwrap();
-        assert!(f32_db38.analysis.annihilator.is_none());
-        assert!(f32_coif17.analysis.annihilator.is_some());
+        let f32_db38 = PreparedFilterBank::<f32>::new(&db38, false);
+        let f32_coif17 = PreparedFilterBank::<f32>::new(&coif17, false);
+        assert!(f32_db38.analysis_annihilator.is_none());
+        assert!(f32_coif17.analysis_annihilator.is_some());
     }
 
     #[test]
     fn dense_signal_rejects_annihilator_execution() {
         let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
-        let plan =
-            create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Symmetric, SimdLevel::new()).unwrap();
-        let signal: Vec<_> = (0..plan.signal_len)
+        let annihilator = annihilator_analysis(4_096, &wavelet, Boundary::Symmetric);
+        let signal: Vec<_> = (0..4_096)
             .map(|index| (index as f64 * 0.173).sin())
             .collect();
 
-        assert!(
-            !plan
-                .analysis
-                .annihilator
-                .as_ref()
-                .unwrap()
-                .should_execute(&signal)
-        );
+        assert!(!annihilator.should_execute(&signal));
     }
 
     #[test]
     fn non_finite_or_overflowing_differences_use_direct_execution() {
         let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
-        let plan =
-            create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Symmetric, SimdLevel::new()).unwrap();
-        let annihilator = plan.analysis.annihilator.as_ref().unwrap();
+        let annihilator = annihilator_analysis(4_096, &wavelet, Boundary::Symmetric);
 
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let mut signal = vec![1.0; plan.signal_len];
+            let mut signal = vec![1.0; 4_096];
             signal[128] = value;
             assert!(!annihilator.should_execute(&signal));
         }
-        let mut overflowing = vec![f64::MAX; plan.signal_len];
+        let mut overflowing = vec![f64::MAX; 4_096];
         overflowing[128..].fill(-f64::MAX);
         assert!(!annihilator.should_execute(&overflowing));
     }
@@ -3117,15 +3103,14 @@ mod tests {
         close: impl Fn(T, T) -> bool,
     ) {
         let wavelet = equivalent_custom_wavelet(wavelet);
-        let accelerated =
-            create_dwt_plan::<T>(signal.len(), &wavelet, boundary, SimdLevel::new()).unwrap();
-        let annihilator = accelerated.analysis.annihilator.as_ref().unwrap();
+        let annihilator = annihilator_analysis(signal.len(), &wavelet, boundary);
         let mut direct =
             create_dwt_plan::<T>(signal.len(), &wavelet, boundary, SimdLevel::new()).unwrap();
         direct.analysis.annihilator = None;
+        direct.analysis.interior.as_mut().unwrap().kernel = AnalysisKernel::Direct;
 
-        let mut actual_approx = vec![T::zero(); accelerated.coeff_len];
-        let mut actual_detail = vec![T::zero(); accelerated.coeff_len];
+        let mut actual_approx = vec![T::zero(); direct.coeff_len];
+        let mut actual_detail = vec![T::zero(); direct.coeff_len];
         annihilator.forward_into(&signal, &mut actual_approx, &mut actual_detail);
         let mut expected_approx = vec![T::zero(); direct.coeff_len];
         let mut expected_detail = vec![T::zero(); direct.coeff_len];
@@ -3142,6 +3127,23 @@ mod tests {
                 "{boundary:?} coefficient {coefficient}: {actual:?} != {expected:?}"
             );
         }
+    }
+
+    fn annihilator_analysis<T: WaveletNum>(
+        signal_len: usize,
+        wavelet: &Wavelet,
+        boundary: Boundary,
+    ) -> AnnihilatorAnalysis<T> {
+        let filters = PreparedFilterBank::<T>::new(wavelet, boundary == Boundary::Periodization);
+        let filter = filters
+            .analysis_annihilator
+            .expect("test wavelet must support annihilator analysis");
+        AnnihilatorAnalysis::new(
+            signal_len,
+            coefficient_len(signal_len, wavelet.filter_len(), boundary),
+            boundary,
+            filter,
+        )
     }
 
     fn equivalent_custom_wavelet(wavelet: &Wavelet) -> Wavelet {
