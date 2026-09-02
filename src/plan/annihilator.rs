@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::num::{is_finite, mul_add};
 use crate::{Boundary, WaveletNum};
 
-use super::for_each_extension_term;
+use super::analysis::for_each_extension_term;
 
 // The scan costs more than the existing SIMD kernel below this support on the
 // measured NEON backend. Keeping the cutoff algebraic lets equivalent custom

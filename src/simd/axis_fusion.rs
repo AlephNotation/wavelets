@@ -1,12 +1,10 @@
 use fearless_simd::{Level, Simd};
 
-use crate::WaveletNum;
-
 use super::{AxisAnalysis, SimdSample, forward_axis_fused};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
-pub(crate) fn forward4<T: WaveletNum + SimdSample<fearless_simd::Avx2>>(
+pub(crate) fn forward4<T: SimdSample<fearless_simd::Avx2>>(
     level: Level,
     analysis: AxisAnalysis<'_, T>,
     approx: &mut [T],
@@ -20,7 +18,7 @@ pub(crate) fn forward4<T: WaveletNum + SimdSample<fearless_simd::Avx2>>(
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
-pub(crate) fn forward8<T: WaveletNum + SimdSample<fearless_simd::Avx512>>(
+pub(crate) fn forward8<T: SimdSample<fearless_simd::Avx512>>(
     level: Level,
     analysis: AxisAnalysis<'_, T>,
     approx: &mut [T],
@@ -34,7 +32,7 @@ pub(crate) fn forward8<T: WaveletNum + SimdSample<fearless_simd::Avx512>>(
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-pub(crate) fn forward8<T: WaveletNum + SimdSample<fearless_simd::Neon>>(
+pub(crate) fn forward8<T: SimdSample<fearless_simd::Neon>>(
     level: Level,
     analysis: AxisAnalysis<'_, T>,
     approx: &mut [T],

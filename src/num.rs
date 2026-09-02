@@ -115,315 +115,167 @@ mod private {
     impl Sealed for f32 {}
     impl Sealed for f64 {}
 
-    impl SimdKernels for f32 {
-        #[inline]
-        #[cfg(feature = "experimental-kernels")]
-        fn is_finite(value: Self) -> bool {
-            value.is_finite()
-        }
+    macro_rules! impl_simd_kernels {
+        ($type:ty) => {
+            impl SimdKernels for $type {
+                #[inline]
+                #[cfg(feature = "experimental-kernels")]
+                fn is_finite(value: Self) -> bool {
+                    value.is_finite()
+                }
 
-        #[inline]
-        fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
-            value.mul_add(multiplier, accumulator)
-        }
+                #[inline]
+                fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
+                    value.mul_add(multiplier, accumulator)
+                }
 
-        #[inline]
-        fn forward_axis(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_axis(
-                simd, analysis, approx, detail
-            ))
-        }
+                #[inline]
+                fn forward_axis(
+                    level: Level,
+                    analysis: crate::simd::AxisAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_axis(
+                        simd, analysis, approx, detail
+                    ))
+                }
 
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        #[inline]
-        fn forward_axis_fused4(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
-        }
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                #[inline]
+                fn forward_axis_fused4(
+                    level: Level,
+                    analysis: crate::simd::AxisAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
+                }
 
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
-        #[inline]
-        fn forward_axis_fused8(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            crate::simd::axis_fusion::forward8(level, analysis, approx, detail)
-        }
+                #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+                #[inline]
+                fn forward_axis_fused8(
+                    level: Level,
+                    analysis: crate::simd::AxisAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    crate::simd::axis_fusion::forward8(level, analysis, approx, detail)
+                }
 
-        #[inline]
-        fn inverse_axis(
-            level: Level,
-            synthesis: crate::simd::AxisSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
-        }
+                #[inline]
+                fn inverse_axis(
+                    level: Level,
+                    synthesis: crate::simd::AxisSynthesis<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
+                }
 
-        #[inline]
-        fn inverse_axis_batched(
-            level: Level,
-            synthesis: crate::simd::AxisSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_axis_batched(simd, synthesis, out))
-        }
+                #[inline]
+                fn inverse_axis_batched(
+                    level: Level,
+                    synthesis: crate::simd::AxisSynthesis<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_axis_batched(simd, synthesis, out))
+                }
 
-        #[inline]
-        fn forward_interior(
-            level: Level,
-            interior: crate::simd::AnalysisInterior<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_interior(
-                simd, interior, approx, detail
-            ))
-        }
+                #[inline]
+                fn forward_interior(
+                    level: Level,
+                    interior: crate::simd::AnalysisInterior<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_interior(
+                        simd, interior, approx, detail
+                    ))
+                }
 
-        #[inline]
-        fn forward_butterfly(
-            level: Level,
-            analysis: crate::simd::ButterflyAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_butterfly(
-                simd, analysis, approx, detail
-            ))
-        }
+                #[inline]
+                fn forward_butterfly(
+                    level: Level,
+                    analysis: crate::simd::ButterflyAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_butterfly(
+                        simd, analysis, approx, detail
+                    ))
+                }
 
-        #[inline]
-        fn forward_butterfly_pair(
-            level: Level,
-            analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
-            approx: &mut [Self],
-            first_detail: &mut [Self],
-            second_detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_butterfly_pair(
-                simd, analysis, approx, first_detail, second_detail
-            ))
-        }
+                #[inline]
+                fn forward_butterfly_pair(
+                    level: Level,
+                    analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    first_detail: &mut [Self],
+                    second_detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_butterfly_pair(
+                        simd, analysis, approx, first_detail, second_detail
+                    ))
+                }
 
-        #[inline]
-        #[cfg(feature = "experimental-kernels")]
-        fn forward_lattice(
-            level: Level,
-            analysis: crate::simd::LatticeAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_lattice(
-                simd, analysis, approx, detail
-            ))
-        }
+                #[inline]
+                #[cfg(feature = "experimental-kernels")]
+                fn forward_lattice(
+                    level: Level,
+                    analysis: crate::simd::LatticeAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_lattice(
+                        simd, analysis, approx, detail
+                    ))
+                }
 
-        #[inline]
-        fn inverse_periodized(
-            level: Level,
-            interior: crate::simd::PeriodizedInterior<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_periodized(
-                simd, interior, out
-            ))
-        }
+                #[inline]
+                fn inverse_periodized(
+                    level: Level,
+                    interior: crate::simd::PeriodizedInterior<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_periodized(
+                        simd, interior, out
+                    ))
+                }
 
-        #[inline]
-        fn inverse_linear(
-            level: Level,
-            synthesis: crate::simd::LinearSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
-        }
+                #[inline]
+                fn inverse_linear(
+                    level: Level,
+                    synthesis: crate::simd::LinearSynthesis<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
+                }
 
-        #[inline]
-        fn inverse_butterfly(
-            level: Level,
-            synthesis: crate::simd::ButterflySynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
-        }
+                #[inline]
+                fn inverse_butterfly(
+                    level: Level,
+                    synthesis: crate::simd::ButterflySynthesis<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
+                }
 
-        #[inline]
-        fn inverse_butterfly_pair(
-            level: Level,
-            synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_butterfly_pair(
-                simd, synthesis, out
-            ))
-        }
+                #[inline]
+                fn inverse_butterfly_pair(
+                    level: Level,
+                    synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
+                    out: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::inverse_butterfly_pair(
+                        simd, synthesis, out
+                    ))
+                }
+            }
+        };
     }
 
-    impl SimdKernels for f64 {
-        #[inline]
-        #[cfg(feature = "experimental-kernels")]
-        fn is_finite(value: Self) -> bool {
-            value.is_finite()
-        }
-
-        #[inline]
-        fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self {
-            value.mul_add(multiplier, accumulator)
-        }
-
-        #[inline]
-        fn forward_axis(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_axis(
-                simd, analysis, approx, detail
-            ))
-        }
-
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        #[inline]
-        fn forward_axis_fused4(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
-        }
-
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
-        #[inline]
-        fn forward_axis_fused8(
-            level: Level,
-            analysis: crate::simd::AxisAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            crate::simd::axis_fusion::forward8(level, analysis, approx, detail)
-        }
-
-        #[inline]
-        fn inverse_axis(
-            level: Level,
-            synthesis: crate::simd::AxisSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_axis(simd, synthesis, out))
-        }
-
-        #[inline]
-        fn inverse_axis_batched(
-            level: Level,
-            synthesis: crate::simd::AxisSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_axis_batched(simd, synthesis, out))
-        }
-
-        #[inline]
-        fn forward_interior(
-            level: Level,
-            interior: crate::simd::AnalysisInterior<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_interior(
-                simd, interior, approx, detail
-            ))
-        }
-
-        #[inline]
-        fn forward_butterfly(
-            level: Level,
-            analysis: crate::simd::ButterflyAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_butterfly(
-                simd, analysis, approx, detail
-            ))
-        }
-
-        #[inline]
-        fn forward_butterfly_pair(
-            level: Level,
-            analysis: crate::simd::ButterflyPairAnalysis<'_, Self>,
-            approx: &mut [Self],
-            first_detail: &mut [Self],
-            second_detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_butterfly_pair(
-                simd, analysis, approx, first_detail, second_detail
-            ))
-        }
-
-        #[inline]
-        #[cfg(feature = "experimental-kernels")]
-        fn forward_lattice(
-            level: Level,
-            analysis: crate::simd::LatticeAnalysis<'_, Self>,
-            approx: &mut [Self],
-            detail: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::forward_lattice(
-                simd, analysis, approx, detail
-            ))
-        }
-
-        #[inline]
-        fn inverse_periodized(
-            level: Level,
-            interior: crate::simd::PeriodizedInterior<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_periodized(
-                simd, interior, out
-            ))
-        }
-
-        #[inline]
-        fn inverse_linear(
-            level: Level,
-            synthesis: crate::simd::LinearSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_linear(simd, synthesis, out))
-        }
-
-        #[inline]
-        fn inverse_butterfly(
-            level: Level,
-            synthesis: crate::simd::ButterflySynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_butterfly(simd, synthesis, out))
-        }
-
-        #[inline]
-        fn inverse_butterfly_pair(
-            level: Level,
-            synthesis: crate::simd::ButterflyPairSynthesis<'_, Self>,
-            out: &mut [Self],
-        ) -> usize {
-            dispatch!(level, simd => crate::simd::inverse_butterfly_pair(
-                simd, synthesis, out
-            ))
-        }
-    }
+    impl_simd_kernels!(f32);
+    impl_simd_kernels!(f64);
 }
 
 /// Numeric types supported by wavelet transform plans.

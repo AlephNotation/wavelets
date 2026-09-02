@@ -1,7 +1,7 @@
 use fearless_simd::Level as SimdLevel;
 
 use crate::plan::create_dwt_plan;
-use crate::{Boundary, Dwt, Wavelet, WaveletError, WaveletNum};
+use crate::{Boundary, Decomposition, Dwt, DwtPlanner, Level, Wavelet, WaveletError, WaveletNum};
 
 /// Computes a single-level one-dimensional discrete wavelet transform.
 ///
@@ -58,6 +58,41 @@ pub fn idwt<T: WaveletNum>(
     let plan = create_dwt_plan(signal_len, wavelet, boundary, SimdLevel::new())?;
     debug_assert_eq!(plan.coeff_len(), approx.len());
     Ok(plan.inverse(approx, detail))
+}
+
+/// Computes a multilevel one-dimensional wavelet decomposition.
+///
+/// `Level::Exact(0)` is an identity decomposition containing only `cA_0`.
+///
+/// # Errors
+///
+/// Returns [`WaveletError::EmptySignal`] for an empty signal or
+/// [`WaveletError::InvalidLevel`] when an exact level exceeds the maximum.
+pub fn wavedec<T: WaveletNum>(
+    signal: &[T],
+    wavelet: &Wavelet,
+    boundary: Boundary,
+    level: Level,
+) -> Result<Decomposition<T>, WaveletError> {
+    let mut planner = DwtPlanner::<T>::new();
+    let plan = planner.plan_wavedec(signal.len(), wavelet, boundary, level)?;
+    Ok(plan.forward(signal))
+}
+
+/// Reconstructs a signal from a decomposition created by [`wavedec`].
+///
+/// # Errors
+///
+/// Returns an error if the decomposition metadata cannot produce a valid plan.
+pub fn waverec<T: WaveletNum>(dec: &Decomposition<T>) -> Result<Vec<T>, WaveletError> {
+    let mut planner = DwtPlanner::<T>::new();
+    let plan = planner.plan_wavedec(
+        dec.original_len(),
+        dec.wavelet(),
+        dec.boundary(),
+        Level::Exact(dec.levels()),
+    )?;
+    Ok(plan.inverse(dec))
 }
 
 fn inverse_signal_len(
