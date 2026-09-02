@@ -580,12 +580,13 @@ enum SampleRule<T> {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
-struct PeriodizedSynthesis {
+#[derive(Debug)]
+struct PeriodizedSynthesis<T> {
     initial_coefficient: usize,
     simd_start: usize,
     simd_available: usize,
     phases_are_swapped: bool,
+    folded_filters: Option<Box<[T]>>,
 }
 
 // Below 24 taps, reduced coefficient loads do not repay the batched kernel's
@@ -730,12 +731,34 @@ impl AxisSynthesisKernel {
     }
 }
 
-impl PeriodizedSynthesis {
-    fn new(signal_len: usize, coeff_len: usize, filter_len: usize) -> Self {
-        let half_filter_len = filter_len / 2;
-        let shift = half_filter_len - 1;
-        let phases_are_swapped = periodized_phases_are_swapped(filter_len);
+impl<T: WaveletNum> PeriodizedSynthesis<T> {
+    fn new(signal_len: usize, coeff_len: usize, rec_lo: &[T], rec_hi: &[T]) -> Self {
+        let original_half_filter_len = rec_lo.len() / 2;
+        let shift = original_half_filter_len - 1;
+        let phases_are_swapped = periodized_phases_are_swapped(rec_lo.len());
         let initial_coefficient = (shift / 2) % coeff_len;
+        // A cyclic convolution whose filter phase is longer than the band
+        // revisits the same coefficient several times. Compose those repeated
+        // taps while planning: this is the same real linear operator with at
+        // most one multiply per input coefficient, and avoids the rounding
+        // growth of repeatedly traversing a very short band.
+        let folded_filters = (coeff_len < original_half_filter_len).then(|| {
+            let (first_lo, second_lo) = rec_lo.split_at(original_half_filter_len);
+            let (first_hi, second_hi) = rec_hi.split_at(original_half_filter_len);
+            let mut filters = vec![T::zero(); 4 * coeff_len];
+            for (source, folded) in [first_lo, second_lo, first_hi, second_hi]
+                .into_iter()
+                .zip(filters.chunks_mut(coeff_len))
+            {
+                for (tap, &value) in source.iter().enumerate() {
+                    folded[tap % coeff_len] += value;
+                }
+            }
+            filters.into_boxed_slice()
+        });
+        let half_filter_len = folded_filters
+            .as_ref()
+            .map_or(original_half_filter_len, |_| coeff_len);
         let complete_pairs = signal_len / 2;
         let (simd_start, simd_available) = if coeff_len >= half_filter_len {
             let start = half_filter_len - 1 - initial_coefficient;
@@ -752,7 +775,16 @@ impl PeriodizedSynthesis {
             simd_start,
             simd_available,
             phases_are_swapped,
+            folded_filters,
         }
+    }
+
+    fn filters<'a>(&'a self, rec_lo: &'a [T], rec_hi: &'a [T]) -> (&'a [T], &'a [T]) {
+        let Some(filters) = &self.folded_filters else {
+            return (rec_lo, rec_hi);
+        };
+        let filter_len = filters.len() / 2;
+        filters.split_at(filter_len)
     }
 }
 
@@ -868,7 +900,7 @@ pub(crate) struct PlannedDwt<T> {
     coeff_len: usize,
     filters: PreparedFilterBank<T>,
     analysis: AnalysisPlan<T>,
-    periodized_synthesis: Option<PeriodizedSynthesis>,
+    periodized_synthesis: Option<PeriodizedSynthesis<T>>,
     axis_synthesis_kernel: AxisSynthesisKernel,
     simd_level: SimdLevel,
 }
@@ -915,8 +947,10 @@ impl<T: WaveletNum> PlannedDwt<T> {
     ) -> Self {
         let filter_len = filters.filter_len;
         let coeff_len = coefficient_len(signal_len, filter_len, boundary);
-        let periodized_synthesis = (boundary == Boundary::Periodization)
-            .then(|| PeriodizedSynthesis::new(signal_len, coeff_len, filter_len));
+        let periodized_synthesis = (boundary == Boundary::Periodization).then(|| {
+            let (rec_lo, rec_hi) = filters.synthesis();
+            PeriodizedSynthesis::new(signal_len, coeff_len, rec_lo, rec_hi)
+        });
         let axis_synthesis_kernel =
             AxisSynthesisKernel::select(signal_len, filter_len, periodized_synthesis.is_some());
         let (dec_lo, dec_hi) = filters.analysis();
@@ -977,6 +1011,13 @@ impl<T: WaveletNum> PlannedDwt<T> {
             .map(|butterfly| (butterfly.low_scale, butterfly.high_scale))
     }
 
+    fn synthesis_filters(&self) -> (&[T], &[T]) {
+        let (rec_lo, rec_hi) = self.filters.synthesis();
+        self.periodized_synthesis
+            .as_ref()
+            .map_or((rec_lo, rec_hi), |layout| layout.filters(rec_lo, rec_hi))
+    }
+
     fn inverse_linear(&self, approx: &[T], detail: &[T], out: &mut [T]) {
         let (rec_lo, rec_hi) = self.filters.synthesis();
         let half_filter_len = rec_lo.len() / 2;
@@ -1012,12 +1053,12 @@ impl<T: WaveletNum> PlannedDwt<T> {
 
     fn inverse_periodized(
         &self,
-        layout: PeriodizedSynthesis,
+        layout: &PeriodizedSynthesis<T>,
         approx: &[T],
         detail: &[T],
         out: &mut [T],
     ) {
-        let (rec_lo, rec_hi) = self.filters.synthesis();
+        let (rec_lo, rec_hi) = self.synthesis_filters();
         let half_filter_len = rec_lo.len() / 2;
         let (first_lo, second_lo) = rec_lo.split_at(half_filter_len);
         let (first_hi, second_hi) = rec_hi.split_at(half_filter_len);
@@ -1193,8 +1234,8 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
                         let earlier = signal[newest - 1];
                         let later = signal[newest];
                         (
-                            (earlier + later) * *low_scale,
-                            (earlier - later) * *high_scale,
+                            later * *low_scale + earlier * *low_scale,
+                            later * (T::zero() - *high_scale) + earlier * *high_scale,
                         )
                     }
                 };
@@ -1230,7 +1271,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
 
         if let Some(butterfly) = self.filters.synthesis_butterfly {
             inverse_butterfly(self.simd_level, butterfly, approx, detail, out);
-        } else if let Some(layout) = self.periodized_synthesis {
+        } else if let Some(layout) = &self.periodized_synthesis {
             self.inverse_periodized(layout, approx, detail, out);
         } else {
             self.inverse_linear(approx, detail, out);
@@ -1335,7 +1376,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             return;
         }
 
-        let (rec_lo, rec_hi) = self.filters.synthesis();
+        let (rec_lo, rec_hi) = self.synthesis_filters();
         let synthesis = AxisSynthesis {
             approx,
             detail,
@@ -1347,9 +1388,11 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             inner,
             periodized_initial: self
                 .periodized_synthesis
+                .as_ref()
                 .map(|layout| layout.initial_coefficient),
             periodized_phases_are_swapped: self
                 .periodized_synthesis
+                .as_ref()
                 .is_some_and(|layout| layout.phases_are_swapped),
         };
         let vectorized = match self.axis_synthesis_kernel {
@@ -1565,7 +1608,7 @@ fn synthesize_axis_tail<T: WaveletNum>(
     first_lane: usize,
     out: &mut [T],
 ) {
-    let (rec_lo, rec_hi) = plan.filters.synthesis();
+    let (rec_lo, rec_hi) = plan.synthesis_filters();
     let half_filter_len = rec_lo.len() / 2;
     let (first_lo, second_lo) = rec_lo.split_at(half_filter_len);
     let (first_hi, second_hi) = rec_hi.split_at(half_filter_len);
@@ -1578,11 +1621,13 @@ fn synthesize_axis_tail<T: WaveletNum>(
             for pair in 0..output_pairs {
                 let first_coefficient = plan
                     .periodized_synthesis
+                    .as_ref()
                     .map_or(pair + half_filter_len - 1, |layout| {
                         (layout.initial_coefficient + pair) % plan.coeff_len
                     });
                 let second_coefficient = if plan
                     .periodized_synthesis
+                    .as_ref()
                     .is_some_and(|layout| layout.phases_are_swapped)
                 {
                     increment_wrapping(first_coefficient, plan.coeff_len)
@@ -2225,6 +2270,53 @@ mod tests {
         let first = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         let second = planner.plan_dwt(8, &wavelet, Boundary::Symmetric).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn butterfly_preserves_two_tap_fir_evaluation_order() {
+        let signal = [0.0_f64, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        let wavelet = Wavelet::haar();
+        let mut planner = DwtPlanner::<f64>::new();
+        let plan = planner
+            .plan_dwt(signal.len(), &wavelet, Boundary::Symmetric)
+            .unwrap();
+
+        let (approx, detail) = plan.forward(&signal);
+        let (sample_pairs, remainder) = signal.as_chunks::<2>();
+        assert!(remainder.is_empty());
+        for (output, samples) in sample_pairs.iter().enumerate() {
+            let low = wavelet.dec_lo()[0] * samples[1] + wavelet.dec_lo()[1] * samples[0];
+            let high = wavelet.dec_hi()[0] * samples[1] + wavelet.dec_hi()[1] * samples[0];
+            assert_eq!(approx[output].to_bits(), low.to_bits());
+            assert_eq!(detail[output].to_bits(), high.to_bits());
+        }
+    }
+
+    #[test]
+    fn short_periodized_synthesis_folds_cyclic_filter_taps() {
+        let wavelet = Wavelet::coiflet(5).unwrap();
+        let plan =
+            create_dwt_plan::<f32>(8, &wavelet, Boundary::Periodization, SimdLevel::new()).unwrap();
+        let layout = plan.periodized_synthesis.as_ref().unwrap();
+        let folded = layout.folded_filters.as_ref().unwrap();
+
+        assert_eq!(plan.coeff_len, 4);
+        assert_eq!(folded.len(), 4 * plan.coeff_len);
+        let (rec_lo, rec_hi) = plan.synthesis_filters();
+        assert_eq!(rec_lo.len(), 2 * plan.coeff_len);
+        assert_eq!(rec_hi.len(), 2 * plan.coeff_len);
+
+        let long_plan =
+            create_dwt_plan::<f32>(64, &wavelet, Boundary::Periodization, SimdLevel::new())
+                .unwrap();
+        assert!(
+            long_plan
+                .periodized_synthesis
+                .as_ref()
+                .unwrap()
+                .folded_filters
+                .is_none()
+        );
     }
 
     #[test]

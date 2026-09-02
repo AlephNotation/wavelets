@@ -561,8 +561,14 @@ pub(crate) fn forward_butterfly<S: Simd, T: SimdSample<S>>(
         let second =
             T::Vector::from_slice(simd, &analysis.signal[input + lanes..input + 2 * lanes]);
         let (earlier, later) = first.deinterleave(second);
-        ((earlier + later) * analysis.low_scale).store_slice(&mut approx[output..output + lanes]);
-        ((earlier - later) * analysis.high_scale).store_slice(&mut detail[output..output + lanes]);
+        // Keep the stored FIR evaluation order. Collapsing these into
+        // `(earlier +/- later) * scale` is algebraically equivalent, but can
+        // differ by one ulp from applying tap 0 to `later` and tap 1 to
+        // `earlier`, as the generic convolution does.
+        (later * analysis.low_scale + earlier * analysis.low_scale)
+            .store_slice(&mut approx[output..output + lanes]);
+        (later * (T::default() - analysis.high_scale) + earlier * analysis.high_scale)
+            .store_slice(&mut detail[output..output + lanes]);
     }
 
     vectorized_outputs
@@ -1531,8 +1537,8 @@ mod tests {
                 for output in 0..butterfly_outputs {
                     let earlier = signal[2 * output];
                     let later = signal[2 * output + 1];
-                    assert_eq!(butterfly_approx[output], (earlier + later) * 0.5);
-                    assert_eq!(butterfly_detail[output], (earlier - later) * 0.25);
+                    assert_eq!(butterfly_approx[output], later * 0.5 + earlier * 0.5);
+                    assert_eq!(butterfly_detail[output], later * -0.25 + earlier * 0.25);
                 }
                 assert!(butterfly_approx[butterfly_outputs..]
                     .iter()
