@@ -8,6 +8,7 @@ publish = false
 
 [features]
 default = []
+experimental-kernels = ["wavelets/experimental-kernels"]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
@@ -35,6 +36,7 @@ harness = false
 [[bench]]
 name = "lattice"
 harness = false
+required-features = ["experimental-kernels"]
 
 [[bench]]
 name = "axis"
@@ -54,6 +56,13 @@ bench = false
 [[bin]]
 name = "lattice-compare"
 path = "src/bin/lattice_compare.rs"
+required-features = ["experimental-kernels"]
+bench = false
+
+[[bin]]
+name = "annihilator_integrated"
+path = "src/bin/annihilator_integrated.rs"
+required-features = ["experimental-kernels"]
 bench = false
 
 # Keep benchmark-only dependencies out of the library package.

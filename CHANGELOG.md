@@ -4,6 +4,10 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+- Made direct FIR the default execution model and placed the paraunitary
+  lattice and annihilator-split analysis backends behind the opt-in
+  `experimental-kernels` Cargo feature.
+
 ## 0.1.0-alpha.10 - 2026-09-01
 
 - Preserved the stored two-tap FIR evaluation order in the optimized Haar

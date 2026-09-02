@@ -23,6 +23,10 @@ Run every benchmark from the repository root:
 cargo bench --manifest-path benchmarks/Cargo.toml
 ```
 
+This measures the default direct-FIR configuration. Add
+`--features experimental-kernels` to include the opt-in lattice and
+annihilator executors.
+
 Run just the planning suite or a filtered transform case:
 
 ```text
@@ -45,10 +49,14 @@ lengths with db38/coif17 and symmetric/antireflect extension. It exists to keep
 long-filter boundary costs visible instead of hiding them behind the db4 mode
 sweep.
 
-The `structured_analysis` group tracks the adaptive long-filter executor on
-piecewise-constant and dense inputs. The dense cases are mandatory controls:
-they measure the event scan plus automatic SIMD fallback instead of reporting
-only the backend's favorable workload.
+With `experimental-kernels` enabled, the `structured_analysis` group tracks
+the adaptive long-filter executor on piecewise-constant and dense inputs. The
+dense cases measure its event scan and automatic SIMD fallback:
+
+```text
+cargo bench --manifest-path benchmarks/Cargo.toml \
+  --features experimental-kernels --bench throughput -- structured_analysis
+```
 
 The `lattice` group compares the normal planner with the generic direct kernel
 for the selected long orthogonal `f64` filters. The normal planner may use the
@@ -59,9 +67,10 @@ since alternating both kernels inside one process is less sensitive to clock
 and scheduler changes than independent Criterion groups:
 
 ```text
-cargo bench --manifest-path benchmarks/Cargo.toml --bench lattice
+cargo bench --manifest-path benchmarks/Cargo.toml \
+  --features experimental-kernels --bench lattice
 cargo run --release --manifest-path benchmarks/Cargo.toml \
-  --bin lattice-compare
+  --features experimental-kernels --bin lattice-compare
 ```
 
 For a wider diagnostic crossover matrix over precisions, long filters, lengths,
@@ -69,9 +78,9 @@ run densities, and all boundary modes, run:
 
 ```text
 cargo run --release --manifest-path benchmarks/Cargo.toml \
-  --bin annihilator_integrated
+  --features experimental-kernels --bin annihilator_integrated
 cargo run --release --manifest-path benchmarks/Cargo.toml \
-  --bin annihilator_integrated -- --boundaries
+  --features experimental-kernels --bin annihilator_integrated -- --boundaries
 ```
 
 This diagnostic runner uses short calibrated medians for architecture tuning;

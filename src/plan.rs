@@ -5,21 +5,31 @@ use std::sync::{Arc, Weak};
 
 use fearless_simd::Level as SimdLevel;
 
+#[cfg(feature = "experimental-kernels")]
+mod annihilator;
+
+#[cfg(feature = "experimental-kernels")]
+use self::annihilator::{AnnihilatorAnalysis, AnnihilatorFilter};
 use crate::decomposition::{Level, WavedecPlan, resolve_levels};
+#[cfg(feature = "experimental-kernels")]
 use crate::lattice::LatticeFilter;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::num::forward_axis_fused4_simd;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use crate::num::forward_axis_fused8_simd;
+#[cfg(feature = "experimental-kernels")]
+use crate::num::forward_lattice_simd;
 use crate::num::{
-    forward_axis_simd, forward_butterfly_simd, forward_interior_simd, forward_lattice_simd,
-    inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd,
-    inverse_periodized_simd, is_finite, mul_add,
+    forward_axis_simd, forward_butterfly_simd, forward_interior_simd, inverse_axis_batched_simd,
+    inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd, inverse_periodized_simd,
+    mul_add,
 };
 use crate::simd::{
     AnalysisInterior, AxisAnalysis, AxisSynthesis, ButterflyAnalysis, ButterflySynthesis,
-    LatticeAnalysis, LinearSynthesis, MIN_LATTICE_OUTPUTS, PeriodizedInterior,
+    LinearSynthesis, PeriodizedInterior,
 };
+#[cfg(feature = "experimental-kernels")]
+use crate::simd::{LatticeAnalysis, MIN_LATTICE_OUTPUTS};
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
 /// A reusable, fixed-length one-level DWT/IDWT plan.
@@ -298,7 +308,11 @@ struct InteriorAnalysis<T> {
 #[derive(Clone, Debug)]
 enum AnalysisKernel<T> {
     Direct,
-    Butterfly { low_scale: T, high_scale: T },
+    Butterfly {
+        low_scale: T,
+        high_scale: T,
+    },
+    #[cfg(feature = "experimental-kernels")]
     Lattice(Arc<LatticeFilter<T>>),
 }
 
@@ -313,232 +327,16 @@ struct AnalysisPlan<T> {
     edges: EdgePlan<T>,
     prefix_len: usize,
     interior: Option<InteriorAnalysis<T>>,
+    #[cfg(feature = "experimental-kernels")]
     annihilator: Option<AnnihilatorAnalysis<T>>,
 }
 
 struct AnalysisBackends<T> {
     butterfly: Option<Butterfly<T>>,
+    #[cfg(feature = "experimental-kernels")]
     annihilator: Option<Arc<AnnihilatorFilter<T>>>,
+    #[cfg(feature = "experimental-kernels")]
     lattice: Option<Arc<LatticeFilter<T>>>,
-}
-
-// The scan costs more than the existing SIMD kernel below this support on the
-// measured NEON backend. Keeping the cutoff algebraic lets equivalent custom
-// banks qualify without coupling execution to built-in wavelet names.
-const MIN_ANNIHILATOR_FILTER_LEN_F64: usize = 76;
-const MIN_ANNIHILATOR_FILTER_LEN_F32: usize = 102;
-const ANNIHILATOR_BASE_FILTER_LEN: usize = 64;
-const ANNIHILATOR_EVENT_COST_SCALE_F64: usize = 6;
-const ANNIHILATOR_EVENT_COST_SCALE_F32: usize = 12;
-
-#[derive(Debug)]
-struct AnnihilatorFilter<T> {
-    low_base: T,
-    high_base: T,
-    low_correction: Box<[T]>,
-    high_correction: Box<[T]>,
-}
-
-impl<T: WaveletNum> AnnihilatorFilter<T> {
-    fn new(dec_lo: &[T], dec_hi: &[T]) -> Option<Self> {
-        let minimum_filter_len = if size_of::<T>() == size_of::<f32>() {
-            MIN_ANNIHILATOR_FILTER_LEN_F32
-        } else {
-            MIN_ANNIHILATOR_FILTER_LEN_F64
-        };
-        if dec_lo.len() < minimum_filter_len {
-            return None;
-        }
-        let (low_base, low_correction) = factor_degree_zero(dec_lo);
-        let (high_base, high_correction) = factor_degree_zero(dec_hi);
-        Some(Self {
-            low_base,
-            high_base,
-            low_correction: low_correction.into_boxed_slice(),
-            high_correction: high_correction.into_boxed_slice(),
-        })
-    }
-}
-
-#[derive(Debug)]
-struct AnnihilatorAnalysis<T> {
-    filter: Arc<AnnihilatorFilter<T>>,
-    boundary: Boundary,
-    phase: isize,
-    first_extended_index: isize,
-    extension_len: usize,
-    maximum_events: usize,
-}
-
-impl<T: WaveletNum> AnnihilatorAnalysis<T> {
-    fn new(
-        signal_len: usize,
-        coeff_len: usize,
-        boundary: Boundary,
-        filter: Arc<AnnihilatorFilter<T>>,
-    ) -> Self {
-        let filter_len = filter.low_correction.len() + 1;
-        let phase = if boundary == Boundary::Periodization {
-            (filter_len / 2) as isize
-        } else {
-            1
-        };
-        let first_extended_index = phase - (filter_len - 1) as isize;
-        let extension_len = 2 * coeff_len - 2 + filter_len;
-        // A correction event touches about half the filter in both bands. This
-        // conservative M4-derived budget admits the measured db38/coif17 win
-        // regions while rejecting db20-like marginal cases entirely above.
-        // f32 direct SIMD processes twice as many samples per vector while
-        // scalar correction scattering does not, so each event must be
-        // charged twice as heavily as f64.
-        let event_cost_scale = if size_of::<T>() == size_of::<f32>() {
-            ANNIHILATOR_EVENT_COST_SCALE_F32
-        } else {
-            ANNIHILATOR_EVENT_COST_SCALE_F64
-        };
-        let maximum_events = ((signal_len as u128
-            * filter_len.saturating_sub(ANNIHILATOR_BASE_FILTER_LEN) as u128)
-            / (event_cost_scale * filter_len) as u128) as usize;
-        Self {
-            filter,
-            boundary,
-            phase,
-            first_extended_index,
-            extension_len,
-            maximum_events,
-        }
-    }
-
-    fn should_execute(&self, signal: &[T]) -> bool {
-        let mut events = 0;
-        let mut previous = signal[0];
-        if !is_finite(previous) {
-            return false;
-        }
-        for &current in &signal[1..] {
-            if !is_finite(current) {
-                return false;
-            }
-            let amplitude = current - previous;
-            if !is_finite(amplitude) {
-                return false;
-            }
-            if amplitude != T::zero() {
-                events += 1;
-                if events > self.maximum_events {
-                    return false;
-                }
-            }
-            previous = current;
-        }
-
-        // The finite extension can introduce additional jumps even when the
-        // original signal is sparse. Count only the two O(filter_len) halos;
-        // the interior transitions were counted above.
-        if self.first_extended_index < 0 {
-            let mut previous = extended_sample(signal, self.first_extended_index, self.boundary);
-            if !is_finite(previous) {
-                return false;
-            }
-            for index in self.first_extended_index + 1..=0 {
-                let current = extended_sample(signal, index, self.boundary);
-                let amplitude = current - previous;
-                if !is_finite(current) || !is_finite(amplitude) {
-                    return false;
-                }
-                if amplitude != T::zero() {
-                    events += 1;
-                    if events > self.maximum_events {
-                        return false;
-                    }
-                }
-                previous = current;
-            }
-        }
-
-        let final_extended_index = self.first_extended_index + self.extension_len as isize - 1;
-        let final_signal_index = signal.len() as isize - 1;
-        if final_extended_index > final_signal_index {
-            let mut previous = signal[signal.len() - 1];
-            for index in signal.len() as isize..=final_extended_index {
-                let current = extended_sample(signal, index, self.boundary);
-                let amplitude = current - previous;
-                if !is_finite(current) || !is_finite(amplitude) {
-                    return false;
-                }
-                if amplitude != T::zero() {
-                    events += 1;
-                    if events > self.maximum_events {
-                        return false;
-                    }
-                }
-                previous = current;
-            }
-        }
-        true
-    }
-
-    fn forward_into(&self, signal: &[T], approx: &mut [T], detail: &mut [T]) {
-        for coefficient in 0..approx.len() {
-            let base_index = self.first_extended_index + 2 * coefficient as isize;
-            let sample = extended_sample(signal, base_index, self.boundary);
-            approx[coefficient] = self.filter.low_base * sample;
-            detail[coefficient] = self.filter.high_base * sample;
-        }
-
-        let mut previous = extended_sample(signal, self.first_extended_index, self.boundary);
-        for offset in 1..self.extension_len {
-            let event = self.first_extended_index + offset as isize;
-            let current = extended_sample(signal, event, self.boundary);
-            let amplitude = current - previous;
-            if amplitude != T::zero() {
-                self.scatter_event(event, amplitude, approx, detail);
-            }
-            previous = current;
-        }
-    }
-
-    #[inline]
-    fn scatter_event(&self, event: isize, amplitude: T, approx: &mut [T], detail: &mut [T]) {
-        let first_tap = (self.phase - event).rem_euclid(2) as usize;
-        for tap in (first_tap..self.filter.low_correction.len()).step_by(2) {
-            let output_offset = event + tap as isize - self.phase;
-            if output_offset < 0 {
-                continue;
-            }
-            let coefficient = output_offset as usize / 2;
-            if coefficient >= approx.len() {
-                break;
-            }
-            approx[coefficient] = mul_add(
-                amplitude,
-                self.filter.low_correction[tap],
-                approx[coefficient],
-            );
-            detail[coefficient] = mul_add(
-                amplitude,
-                self.filter.high_correction[tap],
-                detail[coefficient],
-            );
-        }
-    }
-}
-
-fn factor_degree_zero<T: WaveletNum>(filter: &[T]) -> (T, Vec<T>) {
-    debug_assert!(filter.len() >= 2);
-    let mut base = T::zero();
-    for &tap in filter {
-        base += tap;
-    }
-    let mut running = T::zero();
-    let correction = filter[..filter.len() - 1]
-        .iter()
-        .map(|&tap| {
-            running += tap;
-            running
-        })
-        .collect();
-    (base, correction)
 }
 
 #[derive(Debug)]
@@ -797,7 +595,9 @@ pub(crate) struct PreparedFilterBank<T> {
     data: Arc<[T]>,
     filter_len: usize,
     analysis_butterfly: Option<Butterfly<T>>,
+    #[cfg(feature = "experimental-kernels")]
     analysis_annihilator: Option<Arc<AnnihilatorFilter<T>>>,
+    #[cfg(feature = "experimental-kernels")]
     analysis_lattice: Option<Arc<LatticeFilter<T>>>,
     synthesis_butterfly: Option<Butterfly<T>>,
 }
@@ -808,15 +608,22 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         let mut data = Vec::with_capacity(4 * filter_len);
         data.extend(wavelet.dec_lo().iter().copied().map(T::from_f64));
         data.extend(wavelet.dec_hi().iter().copied().map(T::from_f64));
+        #[cfg(feature = "experimental-kernels")]
         let analysis_annihilator =
             AnnihilatorFilter::new(&data[..filter_len], &data[filter_len..2 * filter_len])
                 .map(Arc::new);
-        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(all(
+            feature = "experimental-kernels",
+            any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")
+        ))]
         let analysis_lattice = (!periodized)
             .then(|| LatticeFilter::new(wavelet))
             .flatten()
             .map(Arc::new);
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(all(
+            feature = "experimental-kernels",
+            not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))
+        ))]
         let analysis_lattice = None;
 
         let rec_lo_start = data.len();
@@ -838,7 +645,9 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
                 low_scale: T::from_f64(butterfly.low_scale),
                 high_scale: T::from_f64(butterfly.high_scale),
             }),
+            #[cfg(feature = "experimental-kernels")]
             analysis_annihilator,
+            #[cfg(feature = "experimental-kernels")]
             analysis_lattice,
             synthesis_butterfly: synthesis_butterfly(wavelet).map(|butterfly| Butterfly {
                 low_scale: T::from_f64(butterfly.low_scale),
@@ -905,6 +714,7 @@ pub(crate) struct PlannedDwt<T> {
     simd_level: SimdLevel,
 }
 
+#[cfg(feature = "experimental-kernels")]
 fn lattice_simd_supported(level: SimdLevel) -> bool {
     let level = level.__dispatch_target();
     #[cfg(target_arch = "aarch64")]
@@ -922,6 +732,7 @@ fn lattice_simd_supported(level: SimdLevel) -> bool {
     }
 }
 
+#[cfg(feature = "experimental-kernels")]
 fn lattice_preempts_annihilator(level: SimdLevel) -> bool {
     let level = level.__dispatch_target();
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -954,9 +765,11 @@ impl<T: WaveletNum> PlannedDwt<T> {
         let axis_synthesis_kernel =
             AxisSynthesisKernel::select(signal_len, filter_len, periodized_synthesis.is_some());
         let (dec_lo, dec_hi) = filters.analysis();
+        #[cfg(feature = "experimental-kernels")]
         let lattice = lattice_simd_supported(simd_level)
             .then(|| filters.analysis_lattice.clone())
             .flatten();
+        #[cfg(feature = "experimental-kernels")]
         let annihilator = if lattice.is_some() && lattice_preempts_annihilator(simd_level) {
             None
         } else {
@@ -969,7 +782,9 @@ impl<T: WaveletNum> PlannedDwt<T> {
             dec_hi,
             AnalysisBackends {
                 butterfly: filters.analysis_butterfly,
+                #[cfg(feature = "experimental-kernels")]
                 annihilator,
+                #[cfg(feature = "experimental-kernels")]
                 lattice,
             },
             boundary,
@@ -998,7 +813,9 @@ impl<T: WaveletNum> PlannedDwt<T> {
                 low_scale,
                 high_scale,
             } => Some((*low_scale, *high_scale)),
-            AnalysisKernel::Direct | AnalysisKernel::Lattice(_) => None,
+            AnalysisKernel::Direct => None,
+            #[cfg(feature = "experimental-kernels")]
+            AnalysisKernel::Lattice(_) => None,
         }
     }
 
@@ -1158,11 +975,14 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             "scratch buffer is too small"
         );
 
-        if let Some(annihilator) = &self.analysis.annihilator
-            && annihilator.should_execute(signal)
+        #[cfg(feature = "experimental-kernels")]
         {
-            annihilator.forward_into(signal, approx, detail);
-            return;
+            if let Some(annihilator) = &self.analysis.annihilator
+                && annihilator.should_execute(signal)
+            {
+                annihilator.forward_into(signal, approx, detail);
+                return;
+            }
         }
 
         let (dec_lo, dec_hi) = self.filters.analysis();
@@ -1208,6 +1028,7 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
                     interior_approx,
                     interior_detail,
                 ),
+                #[cfg(feature = "experimental-kernels")]
                 AnalysisKernel::Lattice(filter) => forward_lattice_simd(
                     self.simd_level,
                     LatticeAnalysis {
@@ -1224,9 +1045,9 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
             for output in vectorized..interior.output_len {
                 let newest = interior.first_newest + 2 * output;
                 let (low, high) = match &interior.kernel {
-                    AnalysisKernel::Direct | AnalysisKernel::Lattice(_) => {
-                        analyze_interior(signal, newest, dec_lo, dec_hi)
-                    }
+                    AnalysisKernel::Direct => analyze_interior(signal, newest, dec_lo, dec_hi),
+                    #[cfg(feature = "experimental-kernels")]
+                    AnalysisKernel::Lattice(_) => analyze_interior(signal, newest, dec_lo, dec_hi),
                     AnalysisKernel::Butterfly {
                         low_scale,
                         high_scale,
@@ -1851,6 +1672,29 @@ pub(crate) fn coefficient_len(signal_len: usize, filter_len: usize, boundary: Bo
     }
 }
 
+fn select_analysis_kernel<T: WaveletNum>(
+    boundary: Boundary,
+    output_len: usize,
+    backends: &AnalysisBackends<T>,
+) -> AnalysisKernel<T> {
+    if let Some(butterfly) = backends.butterfly {
+        return AnalysisKernel::Butterfly {
+            low_scale: butterfly.low_scale,
+            high_scale: butterfly.high_scale,
+        };
+    }
+    #[cfg(feature = "experimental-kernels")]
+    if boundary != Boundary::Periodization
+        && output_len >= MIN_LATTICE_OUTPUTS
+        && let Some(lattice) = &backends.lattice
+    {
+        return AnalysisKernel::Lattice(lattice.clone());
+    }
+    #[cfg(not(feature = "experimental-kernels"))]
+    let _ = (boundary, output_len);
+    AnalysisKernel::Direct
+}
+
 fn build_analysis<T: WaveletNum>(
     signal_len: usize,
     coeff_len: usize,
@@ -1945,25 +1789,9 @@ fn build_analysis<T: WaveletNum>(
         interior: interior_start.map(|start| InteriorAnalysis {
             first_newest: 2 * start + phase,
             output_len: interior_end - start,
-            kernel: backends.butterfly.map_or_else(
-                || {
-                    if boundary == Boundary::Periodization
-                        || interior_end - start < MIN_LATTICE_OUTPUTS
-                    {
-                        AnalysisKernel::Direct
-                    } else {
-                        backends
-                            .lattice
-                            .clone()
-                            .map_or(AnalysisKernel::Direct, AnalysisKernel::Lattice)
-                    }
-                },
-                |butterfly| AnalysisKernel::Butterfly {
-                    low_scale: butterfly.low_scale,
-                    high_scale: butterfly.high_scale,
-                },
-            ),
+            kernel: select_analysis_kernel(boundary, interior_end - start, &backends),
         }),
+        #[cfg(feature = "experimental-kernels")]
         annihilator: backends
             .annihilator
             .map(|filter| AnnihilatorAnalysis::new(signal_len, coeff_len, boundary, filter)),
@@ -2188,30 +2016,6 @@ fn for_each_extension_term<T: WaveletNum>(
         }
         Boundary::Antireflect => for_each_antireflect_term(index, signal_len, visit),
     }
-}
-
-#[inline]
-fn extended_sample<T: WaveletNum>(signal: &[T], index: isize, boundary: Boundary) -> T {
-    if (0..signal.len() as isize).contains(&index) {
-        return signal[index as usize];
-    }
-    if boundary == Boundary::Smooth {
-        if signal.len() == 1 {
-            return signal[0];
-        }
-        if index < 0 {
-            let distance = T::from_f64((-index) as f64);
-            return signal[0] + (signal[0] - signal[1]) * distance;
-        }
-        let last = signal.len() - 1;
-        let distance = T::from_f64((index - last as isize) as f64);
-        return signal[last] + (signal[last] - signal[last - 1]) * distance;
-    }
-    let mut sample = T::zero();
-    for_each_extension_term(index, signal.len(), boundary, |input, weight| {
-        sample = mul_add(signal[input], weight, sample);
-    });
-    sample
 }
 
 fn for_each_antireflect_term<T: WaveletNum>(
@@ -2874,6 +2678,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn annihilator_selection_depends_on_filter_support() {
         let db20 = equivalent_custom_wavelet(&Wavelet::daubechies(20).unwrap());
@@ -2891,6 +2696,7 @@ mod tests {
         assert!(f32_coif17.analysis_annihilator.is_some());
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn dense_signal_rejects_annihilator_execution() {
         let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
@@ -2902,6 +2708,7 @@ mod tests {
         assert!(!annihilator.should_execute(&signal));
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn non_finite_or_overflowing_differences_use_direct_execution() {
         let wavelet = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
@@ -2917,6 +2724,7 @@ mod tests {
         assert!(!annihilator.should_execute(&overflowing));
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn annihilator_matches_direct_kernel_for_every_boundary() {
         let boundaries = [
@@ -2950,7 +2758,7 @@ mod tests {
                     },
                 );
 
-                if wavelet.filter_len() >= MIN_ANNIHILATOR_FILTER_LEN_F32 {
+                if wavelet.filter_len() >= super::annihilator::MIN_ANNIHILATOR_FILTER_LEN_F32 {
                     let f32_signal: Vec<_> = (0..4_096)
                         .map(|index| {
                             let run = index / 64;
@@ -2970,6 +2778,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn lattice_matches_direct_kernel_for_every_supported_boundary() {
         let boundaries = [
@@ -3000,6 +2809,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn lattice_remains_finite_over_wide_dynamic_range() {
         for wavelet in [
@@ -3018,6 +2828,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-kernels")]
     #[test]
     fn avx512_lattice_preempts_the_dominated_structure_scan() {
         let level = SimdLevel::new();
@@ -3041,6 +2852,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "experimental-kernels")]
     fn assert_lattice_matches_direct(
         wavelet: &Wavelet,
         boundary: Boundary,
@@ -3096,6 +2908,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "experimental-kernels")]
     fn assert_annihilator_matches_direct<T: WaveletNum>(
         wavelet: &Wavelet,
         boundary: Boundary,
@@ -3129,6 +2942,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-kernels")]
     fn annihilator_analysis<T: WaveletNum>(
         signal_len: usize,
         wavelet: &Wavelet,
@@ -3146,6 +2960,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "experimental-kernels")]
     fn equivalent_custom_wavelet(wavelet: &Wavelet) -> Wavelet {
         Wavelet::from_filters(
             wavelet.dec_lo(),

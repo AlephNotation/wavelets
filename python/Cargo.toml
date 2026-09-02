@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.98"
 publish = false
 
+[features]
+default = []
+experimental-kernels = ["wavelets/experimental-kernels"]
+
 [lib]
 name = "_wavelets_rs"
 crate-type = ["cdylib"]

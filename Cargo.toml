@@ -21,6 +21,7 @@ include = [
 
 [features]
 count-allocations = ["dep:allocation-counter"]
+experimental-kernels = []
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true }

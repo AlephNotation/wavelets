@@ -7,6 +7,7 @@ mod private {
     pub trait Sealed {}
 
     pub trait SimdKernels: Sealed + Sized {
+        #[cfg(feature = "experimental-kernels")]
         fn is_finite(value: Self) -> bool;
 
         fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self;
@@ -78,6 +79,7 @@ mod private {
             second_detail: &mut [Self],
         ) -> usize;
 
+        #[cfg(feature = "experimental-kernels")]
         fn forward_lattice(
             level: Level,
             analysis: crate::simd::LatticeAnalysis<'_, Self>,
@@ -115,6 +117,7 @@ mod private {
 
     impl SimdKernels for f32 {
         #[inline]
+        #[cfg(feature = "experimental-kernels")]
         fn is_finite(value: Self) -> bool {
             value.is_finite()
         }
@@ -214,6 +217,7 @@ mod private {
         }
 
         #[inline]
+        #[cfg(feature = "experimental-kernels")]
         fn forward_lattice(
             level: Level,
             analysis: crate::simd::LatticeAnalysis<'_, Self>,
@@ -268,6 +272,7 @@ mod private {
 
     impl SimdKernels for f64 {
         #[inline]
+        #[cfg(feature = "experimental-kernels")]
         fn is_finite(value: Self) -> bool {
             value.is_finite()
         }
@@ -367,6 +372,7 @@ mod private {
         }
 
         #[inline]
+        #[cfg(feature = "experimental-kernels")]
         fn forward_lattice(
             level: Level,
             analysis: crate::simd::LatticeAnalysis<'_, Self>,
@@ -451,6 +457,7 @@ pub(crate) fn mul_add<T: WaveletNum>(value: T, multiplier: T, accumulator: T) ->
 }
 
 #[inline]
+#[cfg(feature = "experimental-kernels")]
 pub(crate) fn is_finite<T: WaveletNum>(value: T) -> bool {
     <T as private::SimdKernels>::is_finite(value)
 }
@@ -575,6 +582,7 @@ pub(crate) fn forward_butterfly_pair_simd<T: WaveletNum>(
 }
 
 #[inline]
+#[cfg(feature = "experimental-kernels")]
 pub(crate) fn forward_lattice_simd<T: WaveletNum>(
     level: fearless_simd::Level,
     analysis: crate::simd::LatticeAnalysis<'_, T>,

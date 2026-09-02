@@ -5,6 +5,11 @@ claims. Input generation happens before every timer; each section below states
 its exact planning and output-materialization boundaries. PyWavelets uses its
 normal allocating Python API.
 
+These reports predate the feature split and include what is now the opt-in
+`experimental-kernels` configuration where a lattice or annihilator executor
+qualified. Each section identifies those cases explicitly; direct-FIR-only
+results remain directly comparable.
+
 ## Apple M4 Max / NEON
 
 Measured on macOS 15.6 with an Apple M4 Max using the runtime-selected NEON

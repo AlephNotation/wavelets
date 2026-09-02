@@ -71,8 +71,12 @@ mod boundary;
 mod coefficients;
 mod decomposition;
 mod error;
+#[cfg(feature = "experimental-kernels")]
 mod lattice;
-#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "experimental-kernels",
+    any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")
+))]
 mod lattice_coefficients;
 mod num;
 mod plan;

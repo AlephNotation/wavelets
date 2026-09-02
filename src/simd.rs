@@ -2,6 +2,7 @@ use std::mem::size_of;
 
 use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 
+#[cfg(feature = "experimental-kernels")]
 use crate::lattice::LatticeSection;
 use crate::plan::EdgeTerm;
 
@@ -70,6 +71,7 @@ pub struct ButterflyPairAnalysis<'a, T> {
     pub(crate) second_high_scale: T,
 }
 
+#[cfg(feature = "experimental-kernels")]
 pub struct LatticeAnalysis<'a, T> {
     pub(crate) signal: &'a [T],
     pub(crate) first_pair: usize,
@@ -619,11 +621,16 @@ pub(crate) fn forward_butterfly_pair<S: Simd, T: SimdSample<S>>(
     vectorized_outputs
 }
 
+#[cfg(feature = "experimental-kernels")]
 pub(crate) const MIN_LATTICE_OUTPUTS: usize = 512;
+#[cfg(feature = "experimental-kernels")]
 const LATTICE_TILE: usize = 8;
+#[cfg(feature = "experimental-kernels")]
 const MAX_LATTICE_SECTIONS: usize = 51;
+#[cfg(feature = "experimental-kernels")]
 const MAX_LATTICE_LANES: usize = 8;
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 pub(crate) fn forward_lattice<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -641,6 +648,7 @@ pub(crate) fn forward_lattice<S: Simd, T: SimdSample<S>>(
     }
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn apply_lattice_section<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -658,6 +666,7 @@ fn apply_lattice_section<S: Simd, T: SimdSample<S>>(
     }
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn apply_lattice_0_positive<S: Simd, T: SimdSample<S>>(
     _simd: S,
@@ -668,6 +677,7 @@ fn apply_lattice_0_positive<S: Simd, T: SimdSample<S>>(
     ((-second).mul_add(q, first), first.mul_add(q, second))
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn apply_lattice_0_negative<S: Simd, T: SimdSample<S>>(
     _simd: S,
@@ -678,6 +688,7 @@ fn apply_lattice_0_negative<S: Simd, T: SimdSample<S>>(
     (second.mul_add(q, first), first.mul_add(q, -second))
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn apply_lattice_1_positive<S: Simd, T: SimdSample<S>>(
     _simd: S,
@@ -688,6 +699,7 @@ fn apply_lattice_1_positive<S: Simd, T: SimdSample<S>>(
     (first.mul_add(q, -second), second.mul_add(q, first))
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn apply_lattice_1_negative<S: Simd, T: SimdSample<S>>(
     _simd: S,
@@ -698,6 +710,7 @@ fn apply_lattice_1_negative<S: Simd, T: SimdSample<S>>(
     (first.mul_add(q, second), (-second).mul_add(q, first))
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn load_lattice_pair_width_2<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -712,6 +725,7 @@ fn load_lattice_pair_width_2<S: Simd, T: SimdSample<S>>(
     first.deinterleave(second)
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn forward_lattice_width_2<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -819,6 +833,7 @@ fn forward_lattice_width_2<S: Simd, T: SimdSample<S>>(
     processed
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn transpose_lattice_vectors<S: Simd, T: SimdSample<S>>(
     vectors: &mut [T::Vector; MAX_LATTICE_LANES],
@@ -847,6 +862,7 @@ fn transpose_lattice_vectors<S: Simd, T: SimdSample<S>>(
     (vectors[3], vectors[7]) = second[3].deinterleave(second[7]);
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn load_lattice_predecessor<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -868,6 +884,7 @@ fn load_lattice_predecessor<S: Simd, T: SimdSample<S>>(
     )
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn load_lattice_tile<S: Simd, T: SimdSample<S>>(
     simd: S,
@@ -888,6 +905,7 @@ fn load_lattice_tile<S: Simd, T: SimdSample<S>>(
     transpose_lattice_vectors::<S, T>(second, width);
 }
 
+#[cfg(feature = "experimental-kernels")]
 #[inline(always)]
 fn forward_lattice_wide<S: Simd, T: SimdSample<S>>(
     simd: S,
