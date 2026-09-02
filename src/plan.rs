@@ -624,7 +624,7 @@ impl AxisRowBatch {
             let minimum = if sample_size == size_of::<f32>() {
                 32
             } else {
-                48
+                20
             };
             (32 / sample_size, minimum)
         } else {
@@ -681,11 +681,15 @@ impl AxisAnalysisKernel {
                 if filter_len >= minimum {
                     return Self::Fused8;
                 }
-            } else if level.as_avx2().is_some()
-                && sample_size == size_of::<f32>()
-                && filter_len >= 32
-            {
-                return Self::Fused4;
+            } else if level.as_avx2().is_some() {
+                let minimum = if sample_size == size_of::<f32>() {
+                    32
+                } else {
+                    16
+                };
+                if filter_len >= minimum {
+                    return Self::Fused4;
+                }
             }
         }
 
@@ -863,6 +867,7 @@ pub(crate) struct PlannedDwt<T> {
 }
 
 fn lattice_simd_supported(level: SimdLevel) -> bool {
+    let level = level.__dispatch_target();
     #[cfg(target_arch = "aarch64")]
     {
         !level.is_fallback()
@@ -879,6 +884,7 @@ fn lattice_simd_supported(level: SimdLevel) -> bool {
 }
 
 fn lattice_preempts_annihilator(level: SimdLevel) -> bool {
+    let level = level.__dispatch_target();
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         // On AVX-512, the lattice is faster even than the annihilator's
@@ -2252,10 +2258,37 @@ mod tests {
                     AxisAnalysisKernel::Fused4
                 );
                 assert_eq!(
-                    AxisAnalysisKernel::select(level, 102, size_of::<f64>()),
+                    AxisAnalysisKernel::select(level, 15, size_of::<f64>()),
                     AxisAnalysisKernel::Direct
                 );
+                assert_eq!(
+                    AxisAnalysisKernel::select(level, 16, size_of::<f64>()),
+                    AxisAnalysisKernel::Fused4
+                );
             }
+        }
+    }
+
+    #[test]
+    fn axis_row_batch_threshold_follows_dispatch_backend() {
+        let level = SimdLevel::new();
+        let dispatch = level.__dispatch_target();
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if dispatch.as_avx512().is_some() {
+            assert!(AxisRowBatch::select(level, 31, size_of::<f64>(), usize::MAX, 1).is_none());
+            assert!(AxisRowBatch::select(level, 32, size_of::<f64>(), usize::MAX, 1).is_some());
+        } else if dispatch.as_avx2().is_some() {
+            assert!(AxisRowBatch::select(level, 19, size_of::<f64>(), usize::MAX, 1).is_none());
+            assert!(AxisRowBatch::select(level, 20, size_of::<f64>(), usize::MAX, 1).is_some());
+            assert!(AxisRowBatch::select(level, 31, size_of::<f32>(), usize::MAX, 1).is_none());
+            assert!(AxisRowBatch::select(level, 32, size_of::<f32>(), usize::MAX, 1).is_some());
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if dispatch.as_neon().is_some() {
+            assert!(AxisRowBatch::select(level, 47, size_of::<f64>(), usize::MAX, 1).is_none());
+            assert!(AxisRowBatch::select(level, 48, size_of::<f64>(), usize::MAX, 1).is_some());
         }
     }
 
@@ -2274,6 +2307,7 @@ mod tests {
                 assert_fused_axis_analysis_matches_direct::<f64>(AxisAnalysisKernel::Fused8);
             } else if level.as_avx2().is_some() {
                 assert_fused_axis_analysis_matches_direct::<f32>(AxisAnalysisKernel::Fused4);
+                assert_fused_axis_analysis_matches_direct::<f64>(AxisAnalysisKernel::Fused4);
             }
         }
     }

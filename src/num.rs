@@ -288,6 +288,17 @@ mod private {
             ))
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[inline]
+        fn forward_axis_fused4(
+            level: Level,
+            analysis: crate::simd::AxisAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize {
+            crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
+        }
+
         #[inline]
         fn forward_axis_fused8(
             level: Level,
