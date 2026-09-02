@@ -4,6 +4,15 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.10 - 2026-09-01
+
+- Preserved the stored two-tap FIR evaluation order in the optimized Haar
+  analysis kernel, restoring bit-for-bit agreement with direct convolution.
+- Folded cyclically equivalent synthesis taps while planning periodized
+  transforms whose coefficient bands are shorter than a filter phase. This
+  removes repeated hot-path work and improves `f32` numerical stability for
+  short signals with long filters.
+
 ## 0.1.0-alpha.9 - 2026-09-01
 
 - Restored the documented scalar fallback on architectures without an x86 or
