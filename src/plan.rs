@@ -9,10 +9,12 @@ use crate::decomposition::{Level, WavedecPlan, resolve_levels};
 use crate::lattice::LatticeFilter;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::num::forward_axis_fused4_simd;
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+use crate::num::forward_axis_fused8_simd;
 use crate::num::{
-    forward_axis_fused8_simd, forward_axis_simd, forward_butterfly_simd, forward_interior_simd,
-    forward_lattice_simd, inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd,
-    inverse_linear_simd, inverse_periodized_simd, is_finite, mul_add,
+    forward_axis_simd, forward_butterfly_simd, forward_interior_simd, forward_lattice_simd,
+    inverse_axis_batched_simd, inverse_axis_simd, inverse_butterfly_simd, inverse_linear_simd,
+    inverse_periodized_simd, is_finite, mul_add,
 };
 use crate::simd::{
     AnalysisInterior, AxisAnalysis, AxisSynthesis, ButterflyAnalysis, ButterflySynthesis,
@@ -605,6 +607,36 @@ struct AxisRowBatch {
 }
 
 impl AxisRowBatch {
+    fn vector_geometry(level: SimdLevel, sample_size: usize) -> Option<(usize, usize)> {
+        let level = level.__dispatch_target();
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            if level.as_avx512().is_some() {
+                return Some((64 / sample_size, 32));
+            }
+            if level.as_avx2().is_some() {
+                let minimum_filter_len = if sample_size == size_of::<f32>() {
+                    32
+                } else {
+                    20
+                };
+                return Some((32 / sample_size, minimum_filter_len));
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        if level.as_neon().is_some() {
+            let minimum_filter_len = if sample_size == size_of::<f32>() {
+                32
+            } else {
+                48
+            };
+            return Some((16 / sample_size, minimum_filter_len));
+        }
+        let _ = level;
+        let _ = sample_size;
+        None
+    }
+
     fn select(
         level: SimdLevel,
         filter_len: usize,
@@ -616,33 +648,7 @@ impl AxisRowBatch {
             return None;
         }
 
-        let level = level.__dispatch_target();
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let (width, minimum_filter_len) = if level.as_avx512().is_some() {
-            (64 / sample_size, 32)
-        } else if level.as_avx2().is_some() {
-            let minimum = if sample_size == size_of::<f32>() {
-                32
-            } else {
-                20
-            };
-            (32 / sample_size, minimum)
-        } else {
-            return None;
-        };
-        #[cfg(target_arch = "aarch64")]
-        let (width, minimum_filter_len) = if level.as_neon().is_some() {
-            let minimum = if sample_size == size_of::<f32>() {
-                32
-            } else {
-                48
-            };
-            (16 / sample_size, minimum)
-        } else {
-            return None;
-        };
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
-        return None;
+        let (width, minimum_filter_len) = Self::vector_geometry(level, sample_size)?;
 
         if filter_len < minimum_filter_len {
             return None;
@@ -699,6 +705,7 @@ impl AxisAnalysisKernel {
         }
 
         let _ = level;
+        let _ = filter_len;
         let _ = sample_size;
         Self::Direct
     }

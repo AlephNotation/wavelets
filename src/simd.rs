@@ -5,6 +5,7 @@ use fearless_simd::{Simd, SimdFloatElement, prelude::*};
 use crate::lattice::LatticeSection;
 use crate::plan::EdgeTerm;
 
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 pub(crate) mod axis_fusion;
 
 pub(crate) trait SimdSample<S: Simd>: SimdFloatElement {
@@ -283,6 +284,7 @@ pub(crate) fn forward_axis<S: Simd, T: SimdSample<S>>(
 }
 
 #[inline(always)]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 pub(crate) fn forward_axis_fused<S: Simd, T: SimdSample<S>, const OUTPUTS_PER_BATCH: usize>(
     simd: S,
     analysis: AxisAnalysis<'_, T>,

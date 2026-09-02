@@ -147,6 +147,7 @@ mod private {
             crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
         }
 
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
         #[inline]
         fn forward_axis_fused8(
             level: Level,
@@ -299,6 +300,7 @@ mod private {
             crate::simd::axis_fusion::forward4(level, analysis, approx, detail)
         }
 
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
         #[inline]
         fn forward_axis_fused8(
             level: Level,
@@ -482,6 +484,7 @@ pub(crate) fn forward_axis_fused4_simd<T: WaveletNum>(
     }
 }
 
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
 pub(crate) fn forward_axis_fused8_simd<T: WaveletNum>(
     level: fearless_simd::Level,

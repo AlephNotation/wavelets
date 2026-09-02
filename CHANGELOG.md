@@ -4,6 +4,14 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.9 - 2026-09-01
+
+- Restored the documented scalar fallback on architectures without an x86 or
+  Arm SIMD backend, including WebAssembly, by making fused-axis and packed-row
+  selection follow the target's available executor set.
+- Added a WebAssembly compile check to CI so portable fallback support cannot
+  silently regress.
+
 ## 0.1.0-alpha.8 - 2026-09-01
 
 - Added `Dwt::axis_scratch_len` so callers can plan the exact reusable scratch

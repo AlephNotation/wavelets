@@ -61,6 +61,16 @@ jobs:
       - run: cargo check --lib --target aarch64-unknown-linux-gnu
       - run: cargo check --manifest-path benchmarks/Cargo.toml --bin wavelets-compare-runner --target aarch64-unknown-linux-gnu
 
+  wasm:
+    name: Check WebAssembly scalar fallback
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+      - run: cargo check --lib --target wasm32-unknown-emscripten
+
   benchmarks:
     name: Check benchmark tooling
     runs-on: ubuntu-latest
