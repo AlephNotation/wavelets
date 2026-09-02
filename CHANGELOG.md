@@ -4,9 +4,14 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.11 - 2026-09-02
+
 - Made direct FIR the default execution model and placed the paraunitary
   lattice and annihilator-split analysis backends behind the opt-in
   `experimental-kernels` Cargo feature.
+- Reorganized the planner, decomposition, and SIMD internals into focused
+  modules without changing the public API.
+- Made backend-specific tests independent of the host's runtime SIMD level.
 
 ## 0.1.0-alpha.10 - 2026-09-01
 
