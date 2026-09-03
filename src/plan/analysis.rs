@@ -20,7 +20,7 @@ use super::{Butterfly, F64Butterfly};
 // planar executor is retained only while edges are a meaningful share of the
 // work.
 const MIN_PLANAR_FILTER_LEN: usize = 6;
-const MAX_PLANAR_INTERIORS_PER_EDGE: usize = 6;
+const MAX_PLANAR_INTERIORS_PER_EDGE: usize = 4;
 
 #[derive(Debug)]
 pub(super) struct InteriorAnalysis<T> {

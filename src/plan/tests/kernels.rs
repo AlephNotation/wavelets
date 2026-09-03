@@ -88,6 +88,20 @@ fn planar_analysis_selection_tracks_transform_geometry() {
             create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Periodization, level).unwrap();
         assert!(interior_heavy.analysis.materialized.is_none());
         assert_eq!(interior_heavy.scratch_len(), 0);
+
+        let short_filter_with_substantial_interior = create_dwt_plan::<f64>(
+            64,
+            &Wavelet::daubechies(4).unwrap(),
+            Boundary::Antireflect,
+            level,
+        )
+        .unwrap();
+        assert!(
+            short_filter_with_substantial_interior
+                .analysis
+                .materialized
+                .is_none()
+        );
     }
 
     let short_filter = create_dwt_plan::<f64>(
