@@ -4,6 +4,10 @@
 //! fixed-size plan once, then reuse it without allocating in the hot path.
 //! Boundary mode names, filter orientation, and coefficient ordering match
 //! PyWavelets for the supported real-valued 1D DWT subset.
+//! A reusable plan can also apply that one-dimensional transform along any axis
+//! of a row-major contiguous tensor through [`Dwt::forward_axis_into`] and
+//! [`Dwt::inverse_axis_into`]. High-level multidimensional transform
+//! orchestration is not provided.
 //!
 //! # One-off transforms
 //!

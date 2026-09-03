@@ -18,6 +18,8 @@ The API is Rust-native rather than Python source-compatible.
 | mode `"symmetric"` | `"symmetric".parse::<Boundary>()?` or `Boundary::Symmetric` |
 | `pywt.dwt(x, wavelet, mode)` | `dwt(&x, &wavelet, boundary)?` |
 | `pywt.idwt(c_a, c_d, wavelet, mode)` | `idwt(&c_a, &c_d, &wavelet, boundary)?` |
+| `pywt.dwt(x, wavelet, mode, axis=k)` | `plan.forward_axis_into(...)` over a flattened contiguous tensor |
+| `pywt.idwt(c_a, c_d, wavelet, mode, axis=k)` | `plan.inverse_axis_into(...)` over flattened contiguous tensors |
 | `pywt.wavedec(x, wavelet, mode, level=None)` | `wavedec(&x, &wavelet, boundary, Level::Max)?` |
 | `pywt.wavedec(..., level=n)` | `wavedec(..., Level::Exact(n))?` |
 | `[cA_L, cD_L, ..., cD_1]` | `decomposition.bands()` |
@@ -83,6 +85,25 @@ Concurrent calls must provide separate mutable output and scratch buffers.
 The same pattern applies to `plan_wavedec`: allocate one `Decomposition` with
 `allocate_decomposition`, allocate `scratch_len()` samples once, and reuse both.
 
+## Tensor axes
+
+A single-level `Dwt` plan can execute along any axis of a row-major contiguous
+tensor without transposing it. Pass the tensor as a flat slice and describe its
+shape around the transformed axis as `[outer, axis, inner]`:
+
+- `axis` is the extent used to create the plan;
+- `outer` is the product of dimensions before the transformed axis; and
+- `inner` is the product of dimensions after it.
+
+Use `axis_scratch_len(outer, inner)` to size reusable scratch, then call
+`forward_axis_into` or `inverse_axis_into`. Input and output buffers remain flat;
+the coefficient-axis extent changes from `signal_len()` to `coeff_len()`.
+
+These methods execute one-dimensional transforms across a tensor axis. The
+crate does not yet provide ndarray container integration or high-level
+separable transforms corresponding to `dwt2`, `wavedec2`, `dwtn`, and their
+inverse operations; callers that need those operations must compose axis plans.
+
 ## Errors and buffer contracts
 
 Rust construction and planning failures return `WaveletError`. Once a plan has
@@ -98,11 +119,12 @@ order.
 ## Current boundary
 
 The compatible subset currently covers one-dimensional `f32` and `f64`
-transforms, Haar, `db1..db38`, `sym2..sym20`, `coif1..coif17`, all 15 `bior`
-pairs and their `rbio` reverses, custom filter banks, and all nine extension
-modes. Complex values, multidimensional axes, omitted single-level coefficient
-bands, borrowed decomposition construction, and PyWavelets' other transform
-families are not implemented yet.
+transforms, single-level execution along any axis of a row-major contiguous
+tensor, Haar, `db1..db38`, `sym2..sym20`, `coif1..coif17`, all 15 `bior` pairs
+and their `rbio` reverses, custom filter banks, and all nine extension modes.
+Complex values, high-level multidimensional transform orchestration, omitted
+single-level coefficient bands, borrowed decomposition construction, and
+PyWavelets' other transform families are not implemented yet.
 
 For repeated transforms, replace the allocating facade with `DwtPlanner` or
 `WavedecPlan`. Planning fixes the signal length, wavelet, boundary mode, buffer

@@ -12,6 +12,8 @@ currently supports:
 - Haar, `db1..db38`, `sym2..sym20`, `coif1..coif17`, and every PyWavelets
   `bior`/`rbio` filter bank;
 - all nine PyWavelets boundary modes and custom filter banks;
+- allocation-free single-level execution along any axis of a row-major
+  contiguous tensor;
 - runtime-dispatched SIMD on x86 and aarch64; and
 - reusable plans, caller-owned scratch space, and contiguous coefficient
   storage.
