@@ -5,17 +5,46 @@ claims. Input generation happens before every timer; each section below states
 its exact planning and output-materialization boundaries. PyWavelets uses its
 normal allocating Python API.
 
-These reports predate the feature split and include what is now the opt-in
+The newest expanded report uses the default direct-FIR configuration. Older
+reports predate the feature split and include what is now the opt-in
 `experimental-kernels` configuration where a lattice or annihilator executor
-qualified. Each section identifies those cases explicitly; direct-FIR-only
-results remain directly comparable.
+qualified. Each section identifies its configuration explicitly.
 
 ## Apple M4 Max / NEON
 
 Measured on macOS 15.6 with an Apple M4 Max using the runtime-selected NEON
-backend. Both reports use Rust 1.98's release profile with no additional
+backend. The reports use Rust 1.98's release profile with no additional
 `RUSTFLAGS`, Python 3.14.6, NumPy 2.5.2, and PyWavelets distribution 1.9.0
 (whose module reports 1.8.0).
+
+### Expanded common-workload matrix (default direct FIR)
+
+This same-interpreter report was generated from clean commit
+`176f7c79ca2c0ba78e657664e18498d6700d7c3e`. It expands the canonical suite
+from 92 to 132 cases and uses the default direct-FIR kernels. Haar, db2, and db4
+are measured in both directions over short-to-long signals; the existing
+filter, boundary, odd-length, long-filter, and multilevel sweeps remain.
+
+| Workload | Cases | Reused-plan range | Reused-plan median | Plan + execute range | Plan + execute median | Plan + execute wins |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| f64 Haar/db2/db4, lengths 16–16,384 | 36 | 2.08–4.44x | 3.52x | 0.51–2.30x | 1.05x | 19/36 |
+| f32 Haar/db2/db4, lengths 64–4,096 | 18 | 3.85–5.89x | 4.45x | 0.61–2.43x | 1.12x | 11/18 |
+| Common filters, lengths at most 256 | 30 | 3.40–4.84x | 3.93x | 0.51–1.17x | 0.87x | 8/30 |
+| Common filters, lengths at least 1,024 | 24 | 2.08–5.89x | 3.26x | 0.84–2.43x | 1.53x | 22/24 |
+| Complete canonical matrix | 132 | 0.91–10.10x | 3.57x | 0.02–4.70x | 1.19x | 83/132 |
+
+The reusable-plan path wins all 54 common-filter cases. Rebuilding the plan for
+every call is usually counterproductive below 1,024 samples, which is why the
+crate exposes reusable plans rather than hiding planning inside execution.
+
+The complete matrix has two reused-plan losses: f64 forward transforms of only
+16 samples with db38 or coif17 under antireflect extension run 0.95x and 0.91x
+as fast as PyWavelets. These boundary-dominated cases are retained so the suite
+does not imply that SIMD execution wins every geometry.
+
+Complete environment metadata, checksums, batch sizes, and all 7,920 raw timing
+samples are in
+[apple-m4-max-python-api-representative.json](apple-m4-max-python-api-representative.json).
 
 ### Same-interpreter Python API
 

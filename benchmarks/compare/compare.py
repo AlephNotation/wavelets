@@ -160,11 +160,12 @@ def canonical_cases() -> list[dict[str, Any]]:
                 seen.add(case["id"])
                 cases.append(case)
 
-    for length in (64, 256, 1_024, 4_096, 16_384):
-        add("single_level", "f64", "db4", "symmetric", length)
-    add("single_level", "f32", "db4", "symmetric", 4_096)
+    for wavelet in ("db1", "db2", "db4"):
+        for length in (16, 64, 256, 1_024, 4_096, 16_384):
+            add("single_level", "f64", wavelet, "symmetric", length)
+        for length in (64, 256, 4_096):
+            add("single_level", "f32", wavelet, "symmetric", length)
     for wavelet in (
-        "db1",
         "db20",
         "db38",
         "sym4",

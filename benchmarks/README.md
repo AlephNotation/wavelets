@@ -35,10 +35,24 @@ cargo bench --manifest-path benchmarks/Cargo.toml --bench throughput -- db4/symm
 ```
 
 The throughput suite covers `f32` and `f64`, forward and inverse transforms,
-allocation-free and allocating APIs, representative signal lengths,
-Daubechies, Symlet, Coiflet, biorthogonal, and reverse-biorthogonal filters, all
-boundary modes, and multilevel transforms. Planning has its own suite so setup
-cost is not mixed into execution cost.
+allocation-free and allocating APIs, and multilevel transforms. Its general
+workload matrix crosses the commonly used Haar, db2, and db4 filters with
+lengths 16, 64, 256, 1,024, 4,096, and 16,384. Separate filter and boundary
+sweeps cover longer Daubechies filters, Symlets, Coiflets, biorthogonal and
+reverse-biorthogonal filters, and all boundary modes. Planning has its own suite
+so setup cost is not mixed into execution cost.
+
+The `axis` benchmark has two roles. The `axis_workloads` group measures forward
+and inverse transforms for Haar, db2, db4, db20, and db38 over representative
+batched-vector, image, and volume shapes, including first, middle, and last
+axes. The remaining groups preserve page-aliasing and long-filter regression
+cases used for kernel tuning.
+
+Axis execution accepts flat storage for a row-major contiguous tensor. A
+non-final transform axis is logically strided but the backing allocation is
+contiguous. Physically strided views and complex values are deliberately absent:
+they are outside the Rust API contract and must be measured by an integration
+layer that copies or falls back rather than simulated in a core benchmark.
 
 The planning suite also tracks db38/coif17 antireflect plan-plus-execute cases
 so the cost of compiling sparse edge rows remains visible alongside their
@@ -169,11 +183,11 @@ every timing sample.
 The Python binding comparison imports both `wavelets_rs` and PyWavelets into
 the same CPython interpreter and passes the same NumPy inputs to each. This
 removes the language-boundary asymmetry from the native comparison above. Its
-92-case canonical suite uses a deterministic dense signal and includes
-db38/coif17 boundary-stress cases at lengths 16 and 4,096. A separate 24-case
-structured long-filter suite compares dense controls, 64- and 256-sample
-constant runs, and complete constant signals for f64 db38/coif17 and f32
-coif17 under symmetric and antireflect extension.
+canonical suite includes Haar, db2, and db4 across short-to-long dense signals
+in both precisions, plus the complete filter, boundary, odd-length, long-filter,
+and multilevel sweeps. A separate structured long-filter suite compares dense
+controls, 64- and 256-sample constant runs, and complete constant signals for
+f64 db38/coif17 and f32 coif17 under symmetric and antireflect extension.
 
 Create the development environment and build the extension from the repository
 root:

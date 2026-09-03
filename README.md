@@ -64,16 +64,18 @@ This representative same-interpreter benchmark measures a 4,096-sample `f64`
 db4 forward DWT with symmetric extension. NumPy output allocation is included;
 Rust planning is reused and outside the timer.
 
-| Hardware | SIMD | `wavelets-rs` | PyWavelets | Speedup | 92-case median |
+| Hardware | SIMD | `wavelets-rs` | PyWavelets | Speedup | Canonical median |
 | --- | --- | ---: | ---: | ---: | ---: |
 | AMD Ryzen 7 8745HS | AVX-512 | 2.13 µs | 10.55 µs | 4.95x | 4.82x |
 | AMD EPYC 7R13 | AVX2/FMA | 4.09 µs | 14.99 µs | 3.67x | 3.96x–4.02x |
-| Apple M4 Max | NEON | 2.58 µs | 9.15 µs | 3.55x | 3.56x |
+| Apple M4 Max | NEON | 2.78 µs | 9.91 µs | 3.57x | 3.57x |
 
-The db4 rows use the direct FIR kernel. The published full-suite revisions may
-also use experimental kernels where the wavelet, signal, and hardware qualify.
-Every raw sample, environment description, absolute timing, and methodology is
-published under [benchmarks/results](benchmarks/results/README.md).
+The db4 rows use the direct FIR kernel. The current M4 median covers the
+expanded 132-case suite; the x86 medians cover the preceding 92-case suite. The
+published full-suite revisions may also use experimental kernels where the
+wavelet, signal, and hardware qualify. Every raw sample, environment
+description, absolute timing, and methodology is published under
+[benchmarks/results](benchmarks/results/README.md).
 
 The independent [benchmark package](benchmarks/README.md) contains Criterion,
 profiling, cross-library, and same-interpreter runners without adding benchmark
