@@ -54,21 +54,19 @@ impl AxisPlan {
         plan: &PlannedDwt<T>,
         geometry: AxisGeometry,
     ) -> usize {
-        AxisRowBatch::select(
+        if let Some(batch) = AxisRowBatch::select(
             plan.simd_level,
             plan.filters.filter_len,
             size_of::<T>(),
             geometry.outer,
             geometry.inner,
-        )
-        .map_or_else(
-            || plan.scratch_len(),
-            |batch| {
-                plan.scratch_len()
-                    .checked_add(batch.scratch_len(plan.signal_len, plan.coeff_len))
-                    .expect("axis scratch length overflow")
-            },
-        )
+        ) {
+            batch.scratch_len(plan.signal_len, plan.coeff_len)
+        } else if geometry.inner == 1 {
+            plan.scratch_len()
+        } else {
+            0
+        }
     }
 
     pub(super) fn forward_into<T: WaveletNum>(
@@ -150,8 +148,13 @@ impl AxisPlan {
             geometry.buffer_len(plan.signal_len),
             "incorrect axis output length"
         );
+        let required_scratch = if geometry.inner == 1 {
+            plan.scratch_len()
+        } else {
+            0
+        };
         assert!(
-            scratch.len() >= plan.scratch_len(),
+            scratch.len() >= required_scratch,
             "scratch buffer is too small"
         );
 

@@ -64,6 +64,13 @@ mod private {
             detail: &mut [Self],
         ) -> usize;
 
+        fn forward_planar(
+            level: Level,
+            analysis: crate::simd::PlanarAnalysis<'_, Self>,
+            approx: &mut [Self],
+            detail: &mut [Self],
+        ) -> usize;
+
         fn forward_butterfly(
             level: Level,
             analysis: crate::simd::ButterflyAnalysis<'_, Self>,
@@ -190,6 +197,18 @@ mod private {
                 ) -> usize {
                     dispatch!(level, simd => crate::simd::forward_interior(
                         simd, interior, approx, detail
+                    ))
+                }
+
+                #[inline]
+                fn forward_planar(
+                    level: Level,
+                    analysis: crate::simd::PlanarAnalysis<'_, Self>,
+                    approx: &mut [Self],
+                    detail: &mut [Self],
+                ) -> usize {
+                    dispatch!(level, simd => crate::simd::forward_planar(
+                        simd, analysis, approx, detail
                     ))
                 }
 
@@ -395,6 +414,20 @@ pub(crate) fn forward_interior_simd<T: WaveletNum>(
         0
     } else {
         <T as private::SimdKernels>::forward_interior(level, interior, approx, detail)
+    }
+}
+
+#[inline]
+pub(crate) fn forward_planar_simd<T: WaveletNum>(
+    level: fearless_simd::Level,
+    analysis: crate::simd::PlanarAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    if level.is_fallback() {
+        0
+    } else {
+        <T as private::SimdKernels>::forward_planar(level, analysis, approx, detail)
     }
 }
 

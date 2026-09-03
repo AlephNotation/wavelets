@@ -10,8 +10,8 @@ mod synthesis;
 pub(crate) mod axis_fusion;
 
 pub(crate) use self::analysis::{
-    AnalysisInterior, ButterflyAnalysis, ButterflyPairAnalysis, forward_butterfly,
-    forward_butterfly_pair, forward_interior,
+    AnalysisInterior, ButterflyAnalysis, ButterflyPairAnalysis, PlanarAnalysis, forward_butterfly,
+    forward_butterfly_pair, forward_interior, forward_planar,
 };
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 pub(crate) use self::axis::forward_axis_fused;

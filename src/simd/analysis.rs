@@ -9,6 +9,14 @@ pub struct AnalysisInterior<'a, T> {
     pub(crate) first_newest: usize,
 }
 
+pub struct PlanarAnalysis<'a, T> {
+    pub(crate) dec_lo: &'a [T],
+    pub(crate) dec_hi: &'a [T],
+    pub(crate) even: &'a [T],
+    pub(crate) odd: &'a [T],
+    pub(crate) first_newest: usize,
+}
+
 pub struct ButterflyAnalysis<'a, T> {
     pub(crate) signal: &'a [T],
     pub(crate) first_newest: usize,
@@ -45,6 +53,64 @@ pub(crate) fn forward_interior<S: Simd, T: SimdSample<S>>(
         forward_interior_batches::<_, _, 1>(simd, &interior, approx, detail)
     } else {
         forward_interior_batches::<_, _, 2>(simd, &interior, approx, detail)
+    }
+}
+
+#[inline(always)]
+pub(crate) fn forward_planar<S: Simd, T: SimdSample<S>>(
+    simd: S,
+    analysis: PlanarAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+) -> usize {
+    let lanes = T::Vector::N;
+    let vectorized_outputs = approx.len() - approx.len() % lanes;
+    let batch_width = 4 * lanes;
+    let batched_outputs = vectorized_outputs - vectorized_outputs % batch_width;
+
+    for output in (0..batched_outputs).step_by(batch_width) {
+        forward_planar_batch::<_, _, 4>(simd, &analysis, approx, detail, output);
+    }
+    for output in (batched_outputs..vectorized_outputs).step_by(lanes) {
+        forward_planar_batch::<_, _, 1>(simd, &analysis, approx, detail, output);
+    }
+
+    vectorized_outputs
+}
+
+#[inline(always)]
+fn forward_planar_batch<S: Simd, T: SimdSample<S>, const BATCHES: usize>(
+    simd: S,
+    analysis: &PlanarAnalysis<'_, T>,
+    approx: &mut [T],
+    detail: &mut [T],
+    first_output: usize,
+) {
+    let lanes = T::Vector::N;
+    let zero = T::Vector::splat(simd, T::default());
+    let mut low = [zero; BATCHES];
+    let mut high = low;
+
+    for tap in 0..analysis.dec_lo.len() {
+        let position = analysis.first_newest - tap;
+        let plane = if position.is_multiple_of(2) {
+            analysis.even
+        } else {
+            analysis.odd
+        };
+        let first_sample = position / 2 + first_output;
+        for batch in 0..BATCHES {
+            let sample = first_sample + batch * lanes;
+            let input = T::Vector::from_slice(simd, &plane[sample..sample + lanes]);
+            low[batch] = input.mul_add(analysis.dec_lo[tap], low[batch]);
+            high[batch] = input.mul_add(analysis.dec_hi[tap], high[batch]);
+        }
+    }
+
+    for batch in 0..BATCHES {
+        let output = first_output + batch * lanes;
+        low[batch].store_slice(&mut approx[output..output + lanes]);
+        high[batch].store_slice(&mut detail[output..output + lanes]);
     }
 }
 

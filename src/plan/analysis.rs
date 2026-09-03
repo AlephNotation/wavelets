@@ -15,6 +15,13 @@ use crate::{Boundary, Wavelet, WaveletNum};
 use super::annihilator::{AnnihilatorAnalysis, AnnihilatorFilter};
 use super::{Butterfly, F64Butterfly};
 
+// Materializing two planes does not repay its setup cost below six taps. SIMD
+// interiors are also substantially cheaper than scalar boundary rows, so the
+// planar executor is retained only while edges are a meaningful share of the
+// work.
+const MIN_PLANAR_FILTER_LEN: usize = 6;
+const MAX_PLANAR_INTERIORS_PER_EDGE: usize = 6;
+
 #[derive(Debug)]
 pub(super) struct InteriorAnalysis<T> {
     pub(super) first_newest: usize,
@@ -38,6 +45,7 @@ pub(super) struct AnalysisPlan<T> {
     pub(super) edges: EdgePlan<T>,
     pub(super) prefix_len: usize,
     pub(super) interior: Option<InteriorAnalysis<T>>,
+    pub(super) materialized: Option<MaterializedAnalysis<T>>,
     #[cfg(feature = "experimental-kernels")]
     pub(super) annihilator: Option<AnnihilatorAnalysis<T>>,
 }
@@ -58,6 +66,19 @@ pub(super) struct EdgePlan<T> {
     pub(super) row_offsets: Box<[usize]>,
     pub(super) terms: Box<[EdgeTerm<T>]>,
     ordered_rules: Box<[SampleRule<T>]>,
+}
+
+#[derive(Debug)]
+pub(super) struct MaterializedAnalysis<T> {
+    rules: Box<[SampleRule<T>]>,
+    pub(super) even_len: usize,
+    pub(super) first_newest: usize,
+}
+
+impl<T> MaterializedAnalysis<T> {
+    pub(super) fn len(&self) -> usize {
+        self.rules.len()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -177,6 +198,7 @@ pub(super) fn build_analysis<T: WaveletNum>(
     dec_hi: &[T],
     backends: AnalysisBackends<T>,
     boundary: Boundary,
+    simd_available: bool,
 ) -> AnalysisPlan<T> {
     debug_assert_eq!(dec_lo.len(), dec_hi.len());
     let filter_len = dec_lo.len();
@@ -254,6 +276,47 @@ pub(super) fn build_analysis<T: WaveletNum>(
         }
         row_offsets.push(terms.len());
     }
+    let interior = interior_start.map(|start| InteriorAnalysis {
+        first_newest: 2 * start + phase,
+        output_len: interior_end - start,
+        kernel: select_analysis_kernel(boundary, interior_end - start, &backends),
+    });
+    let direct_interior = interior
+        .as_ref()
+        .is_none_or(|interior| matches!(&interior.kernel, AnalysisKernel::Direct));
+    let interior_len = interior_end - prefix_end;
+    let materialized = (simd_available
+        && direct_interior
+        && filter_len >= MIN_PLANAR_FILTER_LEN
+        && edge_count.saturating_mul(MAX_PLANAR_INTERIORS_PER_EDGE) >= interior_len)
+        .then(|| {
+            let first_extended_index = phase as isize - (filter_len - 1) as isize;
+            let extension_len = coeff_len
+                .saturating_sub(1)
+                .checked_mul(2)
+                .and_then(|len| len.checked_add(filter_len))
+                .expect("analysis extension length overflow");
+            let even_len = extension_len.div_ceil(2);
+            MaterializedAnalysis {
+                // A filter tap visits one parity of the extension at consecutive
+                // locations. Storing both parities separately turns those visits
+                // into contiguous SIMD loads without changing tap order.
+                rules: (0..extension_len)
+                    .step_by(2)
+                    .chain((1..extension_len).step_by(2))
+                    .map(|offset| {
+                        extension_rule::<T>(
+                            first_extended_index + offset as isize,
+                            signal_len,
+                            boundary,
+                        )
+                    })
+                    .collect(),
+                even_len,
+                first_newest: filter_len - 1,
+            }
+        });
+
     AnalysisPlan {
         edges: EdgePlan {
             row_offsets: row_offsets.into_boxed_slice(),
@@ -261,16 +324,48 @@ pub(super) fn build_analysis<T: WaveletNum>(
             ordered_rules: ordered_rules.into_boxed_slice(),
         },
         prefix_len: prefix_end,
-        interior: interior_start.map(|start| InteriorAnalysis {
-            first_newest: 2 * start + phase,
-            output_len: interior_end - start,
-            kernel: select_analysis_kernel(boundary, interior_end - start, &backends),
-        }),
+        interior,
+        materialized,
         #[cfg(feature = "experimental-kernels")]
         annihilator: backends
             .annihilator
             .map(|filter| AnnihilatorAnalysis::new(signal_len, coeff_len, boundary, filter)),
     }
+}
+
+pub(super) fn materialize_extension<T: WaveletNum>(
+    signal: &[T],
+    analysis: &MaterializedAnalysis<T>,
+    out: &mut [T],
+) {
+    debug_assert_eq!(out.len(), analysis.rules.len());
+    for (sample, rule) in out.iter_mut().zip(analysis.rules.iter().copied()) {
+        *sample = evaluate_sample(rule, &mut |input| signal[input]);
+    }
+}
+
+#[inline]
+pub(super) fn analyze_planar<T: WaveletNum>(
+    even: &[T],
+    odd: &[T],
+    newest: usize,
+    dec_lo: &[T],
+    dec_hi: &[T],
+) -> (T, T) {
+    let mut low = T::zero();
+    let mut high = T::zero();
+    for tap in 0..dec_lo.len() {
+        let position = newest - tap;
+        let plane = if position.is_multiple_of(2) {
+            even
+        } else {
+            odd
+        };
+        let sample = plane[position / 2];
+        low += dec_lo[tap] * sample;
+        high += dec_hi[tap] * sample;
+    }
+    (low, high)
 }
 
 #[inline]

@@ -11,7 +11,7 @@ mod synthesis;
 pub(crate) use self::analysis::EdgeTerm;
 use self::analysis::{
     AnalysisBackends, AnalysisKernel, AnalysisPlan, analysis_butterfly, analyze_edges,
-    analyze_interior, build_analysis, coefficient_len,
+    analyze_interior, analyze_planar, build_analysis, coefficient_len, materialize_extension,
 };
 #[cfg(feature = "experimental-kernels")]
 use self::analysis::{lattice_preempts_annihilator, lattice_simd_supported};
@@ -26,10 +26,10 @@ use self::synthesis::{
 use crate::lattice::LatticeFilter;
 #[cfg(feature = "experimental-kernels")]
 use crate::num::forward_lattice_simd;
-use crate::num::{forward_butterfly_simd, forward_interior_simd};
+use crate::num::{forward_butterfly_simd, forward_interior_simd, forward_planar_simd};
 #[cfg(feature = "experimental-kernels")]
 use crate::simd::LatticeAnalysis;
-use crate::simd::{AnalysisInterior, ButterflyAnalysis};
+use crate::simd::{AnalysisInterior, ButterflyAnalysis, PlanarAnalysis};
 use crate::{Boundary, Wavelet, WaveletError, WaveletNum};
 
 /// A reusable, fixed-length one-level DWT/IDWT plan.
@@ -304,6 +304,7 @@ impl<T: WaveletNum> PlannedDwt<T> {
                 lattice,
             },
             boundary,
+            !simd_level.is_fallback(),
         );
         Self {
             signal_len,
@@ -362,7 +363,10 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
     }
 
     fn scratch_len(&self) -> usize {
-        0
+        self.analysis
+            .materialized
+            .as_ref()
+            .map_or(0, |analysis| analysis.len())
     }
 
     fn axis_scratch_len(&self, outer: usize, inner: usize) -> usize {
@@ -393,6 +397,30 @@ impl<T: WaveletNum> Dwt<T> for PlannedDwt<T> {
         }
 
         let (dec_lo, dec_hi) = self.filters.analysis();
+        if let Some(materialized) = &self.analysis.materialized {
+            let extended = &mut scratch[..materialized.len()];
+            materialize_extension(signal, materialized, extended);
+            let (even, odd) = extended.split_at(materialized.even_len);
+            let vectorized = forward_planar_simd(
+                self.simd_level,
+                PlanarAnalysis {
+                    dec_lo,
+                    dec_hi,
+                    even,
+                    odd,
+                    first_newest: materialized.first_newest,
+                },
+                approx,
+                detail,
+            );
+            for output in vectorized..self.coeff_len {
+                let newest = materialized.first_newest + 2 * output;
+                (approx[output], detail[output]) =
+                    analyze_planar(even, odd, newest, dec_lo, dec_hi);
+            }
+            return;
+        }
+
         let prefix_len = self.analysis.prefix_len;
         analyze_edges(
             signal,

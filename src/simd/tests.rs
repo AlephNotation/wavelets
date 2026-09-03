@@ -2,9 +2,9 @@ use fearless_simd::{Level, dispatch};
 
 use super::{
     AnalysisInterior, ButterflyAnalysis, ButterflyPairAnalysis, ButterflyPairSynthesis,
-    ButterflySynthesis, LinearSynthesis, PeriodizedInterior, forward_butterfly,
-    forward_butterfly_pair, forward_interior, inverse_butterfly, inverse_butterfly_pair,
-    inverse_linear, inverse_periodized,
+    ButterflySynthesis, LinearSynthesis, PeriodizedInterior, PlanarAnalysis, forward_butterfly,
+    forward_butterfly_pair, forward_interior, forward_planar, inverse_butterfly,
+    inverse_butterfly_pair, inverse_linear, inverse_periodized,
 };
 
 macro_rules! kernel_test {
@@ -56,6 +56,42 @@ macro_rules! kernel_test {
                 .iter()
                 .all(|&sample| sample == -12_345.0));
             assert!(detail[forward_outputs..]
+                .iter()
+                .all(|&sample| sample == -12_345.0));
+
+            let even: Vec<_> = signal.iter().step_by(2).copied().collect();
+            let odd: Vec<_> = signal.iter().skip(1).step_by(2).copied().collect();
+            let mut planar_approx = vec![-12_345.0; 47];
+            let mut planar_detail = vec![-12_345.0; 47];
+            let planar_outputs = dispatch!(Level::new(), simd => forward_planar(
+                simd,
+                PlanarAnalysis {
+                    dec_lo: &dec_lo,
+                    dec_hi: &dec_hi,
+                    even: &even,
+                    odd: &odd,
+                    first_newest: 7,
+                },
+                &mut planar_approx,
+                &mut planar_detail,
+            ));
+            assert!(planar_outputs > 0);
+            assert!(planar_outputs < planar_approx.len());
+            for output in 0..planar_outputs {
+                let newest = 7 + 2 * output;
+                let mut low: $sample = 0.0;
+                let mut high: $sample = 0.0;
+                for tap in 0..dec_lo.len() {
+                    low = signal[newest - tap].mul_add(dec_lo[tap], low);
+                    high = signal[newest - tap].mul_add(dec_hi[tap], high);
+                }
+                assert!((planar_approx[output] - low).abs() <= $tolerance);
+                assert!((planar_detail[output] - high).abs() <= $tolerance);
+            }
+            assert!(planar_approx[planar_outputs..]
+                .iter()
+                .all(|&sample| sample == -12_345.0));
+            assert!(planar_detail[planar_outputs..]
                 .iter()
                 .all(|&sample| sample == -12_345.0));
 

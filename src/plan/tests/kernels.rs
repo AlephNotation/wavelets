@@ -75,6 +75,32 @@ fn butterfly_selection_depends_on_filter_algebra() {
 }
 
 #[test]
+fn planar_analysis_selection_tracks_transform_geometry() {
+    let wavelet = Wavelet::daubechies(38).unwrap();
+    let level = SimdLevel::new();
+    if !level.is_fallback() {
+        let edge_heavy =
+            create_dwt_plan::<f64>(16, &wavelet, Boundary::Periodization, level).unwrap();
+        assert!(edge_heavy.analysis.materialized.is_some());
+        assert!(edge_heavy.scratch_len() > 0);
+
+        let interior_heavy =
+            create_dwt_plan::<f64>(4_096, &wavelet, Boundary::Periodization, level).unwrap();
+        assert!(interior_heavy.analysis.materialized.is_none());
+        assert_eq!(interior_heavy.scratch_len(), 0);
+    }
+
+    let short_filter = create_dwt_plan::<f64>(
+        16,
+        &Wavelet::daubechies(2).unwrap(),
+        Boundary::Periodization,
+        level,
+    )
+    .unwrap();
+    assert!(short_filter.analysis.materialized.is_none());
+}
+
+#[test]
 fn f32_long_filter_smooth_round_trip_remains_stable() {
     let wavelet = Wavelet::daubechies(28).unwrap();
     let plan = create_dwt_plan::<f32>(4, &wavelet, Boundary::Smooth, SimdLevel::new()).unwrap();
