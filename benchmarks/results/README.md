@@ -20,27 +20,30 @@ backend. The reports use Rust 1.98's release profile with no additional
 ### Expanded common-workload matrix (default direct FIR)
 
 This same-interpreter report was generated from clean commit
-`176f7c79ca2c0ba78e657664e18498d6700d7c3e`. It expands the canonical suite
+`2576e7e3a82d9f560511ef6ff501035a0fa6fd53`. It expands the canonical suite
 from 92 to 132 cases and uses the default direct-FIR kernels. Haar, db2, and db4
 are measured in both directions over short-to-long signals; the existing
 filter, boundary, odd-length, long-filter, and multilevel sweeps remain.
 
 | Workload | Cases | Reused-plan range | Reused-plan median | Plan + execute range | Plan + execute median | Plan + execute wins |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| f64 Haar/db2/db4, lengths 16–16,384 | 36 | 2.08–4.44x | 3.52x | 0.51–2.30x | 1.05x | 19/36 |
-| f32 Haar/db2/db4, lengths 64–4,096 | 18 | 3.85–5.89x | 4.45x | 0.61–2.43x | 1.12x | 11/18 |
-| Common filters, lengths at most 256 | 30 | 3.40–4.84x | 3.93x | 0.51–1.17x | 0.87x | 8/30 |
-| Common filters, lengths at least 1,024 | 24 | 2.08–5.89x | 3.26x | 0.84–2.43x | 1.53x | 22/24 |
-| Complete canonical matrix | 132 | 0.91–10.10x | 3.57x | 0.02–4.70x | 1.19x | 83/132 |
+| f64 Haar/db2/db4, lengths 16–16,384 | 36 | 2.02–4.19x | 3.43x | 0.51–2.31x | 1.00x | 18/36 |
+| f32 Haar/db2/db4, lengths 64–4,096 | 18 | 3.81–5.89x | 4.44x | 0.61–2.41x | 1.11x | 10/18 |
+| Common filters, lengths at most 256 | 30 | 3.41–4.71x | 3.88x | 0.51–1.15x | 0.86x | 6/30 |
+| Common filters, lengths at least 1,024 | 24 | 2.02–5.89x | 3.21x | 0.83–2.41x | 1.56x | 22/24 |
+| Complete canonical matrix | 132 | 1.79–10.00x | 3.54x | 0.02–4.69x | 1.18x | 81/132 |
 
-The reusable-plan path wins all 54 common-filter cases. Rebuilding the plan for
-every call is usually counterproductive below 1,024 samples, which is why the
-crate exposes reusable plans rather than hiding planning inside execution.
+The reusable-plan path wins all 54 common-filter cases and all 132 cases in the
+complete canonical matrix. Rebuilding the plan for every call is usually
+counterproductive below 1,024 samples, which is why the crate exposes reusable
+plans rather than hiding planning inside execution.
 
-The complete matrix has two reused-plan losses: f64 forward transforms of only
-16 samples with db38 or coif17 under antireflect extension run 0.95x and 0.91x
-as fast as PyWavelets. These boundary-dominated cases are retained so the suite
-does not imply that SIMD execution wins every geometry.
+The previously disclosed losses for 16-sample f64 db38 and coif17 antireflect
+analysis now use a planner-selected materialized planar representation. They
+take 1.11 us versus PyWavelets' 3.94 us (3.56x) and 1.53 us versus 6.55 us
+(4.28x), respectively. The planner retains the existing direct representation
+when the transform has enough interior work that materialization would not pay
+for itself.
 
 Complete environment metadata, checksums, batch sizes, and all 7,920 raw timing
 samples are in

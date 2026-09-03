@@ -68,7 +68,7 @@ Rust planning is reused and outside the timer.
 | --- | --- | ---: | ---: | ---: | ---: |
 | AMD Ryzen 7 8745HS | AVX-512 | 2.13 µs | 10.55 µs | 4.95x | 4.82x |
 | AMD EPYC 7R13 | AVX2/FMA | 4.09 µs | 14.99 µs | 3.67x | 3.96x–4.02x |
-| Apple M4 Max | NEON | 2.78 µs | 9.91 µs | 3.57x | 3.57x |
+| Apple M4 Max | NEON | 2.78 µs | 9.93 µs | 3.57x | 3.54x |
 
 The db4 rows use the direct FIR kernel. The current M4 median covers the
 expanded 132-case suite; the x86 medians cover the preceding 92-case suite. The
