@@ -4,6 +4,8 @@ All notable changes to `wavelets` are documented here.
 
 ## Unreleased
 
+## 0.1.0-alpha.12 - 2026-09-04
+
 - Reject filter coefficients and butterfly scales that become non-finite in
   the planned numeric type, including custom f64 taps that overflow f32.
   Single-level and multilevel planning return `InvalidFilterBank`; valid f64

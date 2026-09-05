@@ -53,7 +53,7 @@ The opt-in `experimental-kernels` feature adds paraunitary lattice and
 annihilator-split analysis backends:
 
 ```toml
-wavelets = { version = "0.1.0-alpha.11", features = ["experimental-kernels"] }
+wavelets = { version = "0.1.0-alpha.12", features = ["experimental-kernels"] }
 ```
 
 ## Performance
