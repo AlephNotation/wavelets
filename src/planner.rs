@@ -67,7 +67,9 @@ impl<T: WaveletNum> DwtPlanner<T> {
     ///
     /// Returns [`WaveletError::EmptySignal`] for `len == 0`, or
     /// [`WaveletError::BoundaryRequiresLongerSignal`] when the selected
-    /// extension mode is undefined for `len`.
+    /// extension mode is undefined for `len`. Returns
+    /// [`WaveletError::InvalidFilterBank`] if a filter coefficient or scale
+    /// becomes non-finite when converted to `T`.
     pub fn plan_dwt(
         &mut self,
         len: usize,
@@ -100,7 +102,9 @@ impl<T: WaveletNum> DwtPlanner<T> {
     ///
     /// Returns [`WaveletError::EmptySignal`] for `len == 0`,
     /// [`WaveletError::InvalidLevel`] when an exact level exceeds the maximum,
-    /// or a boundary/length planning error at an intermediate level.
+    /// [`WaveletError::InvalidFilterBank`] if a filter coefficient or scale
+    /// becomes non-finite when converted to `T`, or a boundary/length planning
+    /// error at an intermediate level.
     pub fn plan_wavedec(
         &mut self,
         len: usize,
@@ -119,7 +123,7 @@ impl<T: WaveletNum> DwtPlanner<T> {
             return Ok(plan);
         }
 
-        let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization);
+        let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization)?;
         let plan = Arc::new(WavedecPlan::new(
             len,
             wavelet,

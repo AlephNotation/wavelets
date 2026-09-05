@@ -7,7 +7,6 @@ mod private {
     pub trait Sealed {}
 
     pub trait SimdKernels: Sealed + Sized {
-        #[cfg(feature = "experimental-kernels")]
         fn is_finite(value: Self) -> bool;
 
         fn mul_add(value: Self, multiplier: Self, accumulator: Self) -> Self;
@@ -119,7 +118,6 @@ mod private {
         ($type:ty) => {
             impl SimdKernels for $type {
                 #[inline]
-                #[cfg(feature = "experimental-kernels")]
                 fn is_finite(value: Self) -> bool {
                     value.is_finite()
                 }
@@ -299,7 +297,10 @@ pub trait WaveletNum:
     /// Additive identity.
     fn zero() -> Self;
 
-    /// Converts a filter coefficient into this numeric type.
+    /// Converts a value into this numeric type using ordinary float rounding.
+    ///
+    /// This conversion can overflow to infinity for `f32`. Transform planning
+    /// separately validates that converted filter coefficients are finite.
     fn from_f64(value: f64) -> Self;
 }
 
@@ -309,9 +310,18 @@ pub(crate) fn mul_add<T: WaveletNum>(value: T, multiplier: T, accumulator: T) ->
 }
 
 #[inline]
-#[cfg(feature = "experimental-kernels")]
 pub(crate) fn is_finite<T: WaveletNum>(value: T) -> bool {
     <T as private::SimdKernels>::is_finite(value)
+}
+
+pub(crate) fn checked_from_f64<T: WaveletNum>(value: f64) -> Result<T, crate::WaveletError> {
+    let converted = T::from_f64(value);
+    if !is_finite(converted) {
+        return Err(crate::WaveletError::InvalidFilterBank(
+            "filter coefficients and scales must be finite in the transform's numeric type",
+        ));
+    }
+    Ok(converted)
 }
 
 #[inline]

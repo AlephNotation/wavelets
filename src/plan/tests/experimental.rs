@@ -7,14 +7,14 @@ fn annihilator_selection_depends_on_filter_support() {
     let db20 = equivalent_custom_wavelet(&Wavelet::daubechies(20).unwrap());
     let db38 = equivalent_custom_wavelet(&Wavelet::daubechies(38).unwrap());
     let coif17 = equivalent_custom_wavelet(&Wavelet::coiflet(17).unwrap());
-    let short = PreparedFilterBank::<f64>::new(&db20, false);
-    let long = PreparedFilterBank::<f64>::new(&db38, false);
+    let short = PreparedFilterBank::<f64>::new(&db20, false).unwrap();
+    let long = PreparedFilterBank::<f64>::new(&db38, false).unwrap();
 
     assert!(short.analysis_annihilator.is_none());
     assert!(long.analysis_annihilator.is_some());
 
-    let f32_db38 = PreparedFilterBank::<f32>::new(&db38, false);
-    let f32_coif17 = PreparedFilterBank::<f32>::new(&coif17, false);
+    let f32_db38 = PreparedFilterBank::<f32>::new(&db38, false).unwrap();
+    let f32_coif17 = PreparedFilterBank::<f32>::new(&coif17, false).unwrap();
     assert!(f32_db38.analysis_annihilator.is_none());
     assert!(f32_coif17.analysis_annihilator.is_some());
 }
@@ -262,7 +262,8 @@ fn annihilator_analysis<T: WaveletNum>(
     wavelet: &Wavelet,
     boundary: Boundary,
 ) -> AnnihilatorAnalysis<T> {
-    let filters = PreparedFilterBank::<T>::new(wavelet, boundary == Boundary::Periodization);
+    let filters =
+        PreparedFilterBank::<T>::new(wavelet, boundary == Boundary::Periodization).unwrap();
     let filter = filters
         .analysis_annihilator
         .expect("test wavelet must support annihilator analysis");

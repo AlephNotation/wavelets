@@ -26,7 +26,7 @@ use self::synthesis::{
 use crate::lattice::LatticeFilter;
 #[cfg(feature = "experimental-kernels")]
 use crate::num::forward_lattice_simd;
-use crate::num::{forward_butterfly_simd, forward_interior_simd};
+use crate::num::{checked_from_f64, forward_butterfly_simd, forward_interior_simd};
 #[cfg(feature = "experimental-kernels")]
 use crate::simd::LatticeAnalysis;
 use crate::simd::{AnalysisInterior, ButterflyAnalysis};
@@ -161,7 +161,7 @@ pub(crate) fn create_dwt_plan<T: WaveletNum>(
     simd_level: SimdLevel,
 ) -> Result<PlannedDwt<T>, WaveletError> {
     validate_plan(len, boundary)?;
-    let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization);
+    let filters = PreparedFilterBank::new(wavelet, boundary == Boundary::Periodization)?;
     Ok(PlannedDwt::new(len, boundary, filters, simd_level))
 }
 
@@ -184,11 +184,12 @@ pub(crate) struct PreparedFilterBank<T> {
 }
 
 impl<T: WaveletNum> PreparedFilterBank<T> {
-    pub(crate) fn new(wavelet: &Wavelet, periodized: bool) -> Self {
+    pub(crate) fn new(wavelet: &Wavelet, periodized: bool) -> Result<Self, WaveletError> {
         let filter_len = wavelet.filter_len();
         let mut data = Vec::with_capacity(4 * filter_len);
-        data.extend(wavelet.dec_lo().iter().copied().map(T::from_f64));
-        data.extend(wavelet.dec_hi().iter().copied().map(T::from_f64));
+        for &tap in wavelet.dec_lo().iter().chain(wavelet.dec_hi()) {
+            data.push(checked_from_f64(tap)?);
+        }
         #[cfg(feature = "experimental-kernels")]
         let analysis_annihilator =
             AnnihilatorFilter::new(&data[..filter_len], &data[filter_len..2 * filter_len])
@@ -208,33 +209,31 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
         let analysis_lattice = None;
 
         let rec_lo_start = data.len();
-        extend_polyphase(&mut data, wavelet.rec_lo());
+        extend_polyphase(&mut data, wavelet.rec_lo())?;
         if periodized && periodized_phases_are_swapped(filter_len) {
             data[rec_lo_start..].rotate_left(filter_len / 2);
         }
 
         let rec_hi_start = data.len();
-        extend_polyphase(&mut data, wavelet.rec_hi());
+        extend_polyphase(&mut data, wavelet.rec_hi())?;
         if periodized && periodized_phases_are_swapped(filter_len) {
             data[rec_hi_start..].rotate_left(filter_len / 2);
         }
 
-        Self {
+        Ok(Self {
             data: data.into(),
             filter_len,
-            analysis_butterfly: analysis_butterfly(wavelet).map(|butterfly| Butterfly {
-                low_scale: T::from_f64(butterfly.low_scale),
-                high_scale: T::from_f64(butterfly.high_scale),
-            }),
+            analysis_butterfly: analysis_butterfly(wavelet)
+                .map(F64Butterfly::prepare)
+                .transpose()?,
             #[cfg(feature = "experimental-kernels")]
             analysis_annihilator,
             #[cfg(feature = "experimental-kernels")]
             analysis_lattice,
-            synthesis_butterfly: synthesis_butterfly(wavelet).map(|butterfly| Butterfly {
-                low_scale: T::from_f64(butterfly.low_scale),
-                high_scale: T::from_f64(butterfly.high_scale),
-            }),
-        }
+            synthesis_butterfly: synthesis_butterfly(wavelet)
+                .map(F64Butterfly::prepare)
+                .transpose()?,
+        })
     }
 
     fn analysis(&self) -> (&[T], &[T]) {
@@ -253,6 +252,15 @@ impl<T: WaveletNum> PreparedFilterBank<T> {
 struct F64Butterfly {
     low_scale: f64,
     high_scale: f64,
+}
+
+impl F64Butterfly {
+    fn prepare<T: WaveletNum>(self) -> Result<Butterfly<T>, WaveletError> {
+        Ok(Butterfly {
+            low_scale: checked_from_f64(self.low_scale)?,
+            high_scale: checked_from_f64(self.high_scale)?,
+        })
+    }
 }
 
 #[derive(Debug)]

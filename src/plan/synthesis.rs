@@ -1,8 +1,10 @@
 use fearless_simd::Level as SimdLevel;
 
-use crate::num::{inverse_butterfly_simd, inverse_linear_simd, inverse_periodized_simd};
+use crate::num::{
+    checked_from_f64, inverse_butterfly_simd, inverse_linear_simd, inverse_periodized_simd,
+};
 use crate::simd::{ButterflySynthesis, LinearSynthesis, PeriodizedInterior};
-use crate::{Wavelet, WaveletNum};
+use crate::{Wavelet, WaveletError, WaveletNum};
 
 use super::{Butterfly, F64Butterfly, PlannedDwt};
 
@@ -219,16 +221,19 @@ pub(super) fn inverse_butterfly<T: WaveletNum>(
     }
 }
 
-pub(super) fn extend_polyphase<T: WaveletNum>(out: &mut Vec<T>, filter: &[f64]) {
+pub(super) fn extend_polyphase<T: WaveletNum>(
+    out: &mut Vec<T>,
+    filter: &[f64],
+) -> Result<(), WaveletError> {
     debug_assert!(filter.len().is_multiple_of(2));
-    out.extend(
-        filter
-            .iter()
-            .step_by(2)
-            .chain(filter.iter().skip(1).step_by(2))
-            .copied()
-            .map(T::from_f64),
-    );
+    for &tap in filter
+        .iter()
+        .step_by(2)
+        .chain(filter.iter().skip(1).step_by(2))
+    {
+        out.push(checked_from_f64(tap)?);
+    }
+    Ok(())
 }
 
 #[inline(always)]

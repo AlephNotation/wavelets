@@ -2,6 +2,30 @@ use super::super::*;
 use crate::DwtPlanner;
 
 #[test]
+fn butterfly_scales_are_checked_in_the_target_precision() {
+    for value in [1e40, -1e40, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        for (low_scale, high_scale) in [(value, 0.5), (0.5, value)] {
+            assert!(matches!(
+                F64Butterfly {
+                    low_scale,
+                    high_scale
+                }
+                .prepare::<f32>(),
+                Err(WaveletError::InvalidFilterBank(_))
+            ));
+        }
+    }
+    let scales = F64Butterfly {
+        low_scale: 1e40,
+        high_scale: -1e40,
+    }
+    .prepare::<f64>()
+    .unwrap();
+    assert_eq!(scales.low_scale, 1e40);
+    assert_eq!(scales.high_scale, -1e40);
+}
+
+#[test]
 fn butterfly_preserves_two_tap_fir_evaluation_order() {
     let signal = [0.0_f64, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
     let wavelet = Wavelet::haar();

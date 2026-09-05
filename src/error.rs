@@ -16,7 +16,8 @@ pub enum WaveletError {
         /// The boundary mode's stable name.
         boundary: &'static str,
     },
-    /// A custom filter bank is structurally invalid.
+    /// A filter bank is structurally invalid or cannot be represented with
+    /// finite coefficients and scales in the planned numeric type.
     InvalidFilterBank(&'static str),
     /// A boundary mode name is not recognized.
     UnknownBoundary {
